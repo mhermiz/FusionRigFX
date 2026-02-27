@@ -5,145 +5,204 @@ FuRegisterClass("PuppetPinPhase1", CT_Tool, {
     REGS_OpIconString = "PP1",
 })
 
+local MAX_PINS = 4
+PinEnabled = {}
+PinPos = {}
+PinStrength = {}
+PinRadius = {}
+
 -- Create Inputs/Outputs
 function Create()
-	-- Image input
-	InImage = self:AddInput("Image", "Image", {
-		LINKID_DataType = "Image",
-		LINK_Main = 1
-	})
+    -- Image input
+    InImage = self:AddInput("Image", "Image", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1
+    })
 
-	-- Draggable Pin
-	Pin = self:AddInput("Pin", "Pin", {
-		LINKID_DataType      = "Point",
-		INPID_InputControl   = "OffsetControl",
-		INPID_PreviewControl = "PointControl",
-		INP_DefaultX         = 0.5,
-		INP_DefaultY         = 0.5,
-		INP_DoNotifyChanged  = true,
-	})
-	Pin:SetAttrs({ PC_Visible = true })
+    for i = 1, MAX_PINS do
+        self:BeginControlNest("Pin " .. i, "PinNest" .. i, i == 1, {})
 
-	-- Strength slider
-	Strength = self:AddInput("Strength", "Strength", {
-		LINKID_DataType = "Number",
-		INPID_InputControl = "SliderControl",
-		INP_MinScale = -0.2,
-		INP_MaxScale = 0.2,
-		INP_Default = 0.05,
-		INP_MinAllowed = -1.0,
-		INP_MaxAllowed = 1.0
-	})
+        PinEnabled[i] = self:AddInput("Enable", "Enable" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "CheckboxControl",
+            INP_Integer = true,
+            INP_Default = (i == 1) and 1 or 0,
+            INP_DoNotifyChanged = true,
+        })
 
-	-- Radius slider
-	Radius = self:AddInput("Radius", "Radius", {
-		LINKID_DataType = "Number",
-		INPID_InputControl = "SliderControl",
-		INP_MinScale = 0.01,
-		INP_MaxScale = 1.0,
-		INP_Default = 0.25,
-		INP_MinAllowed = 0.001,
-		INP_MaxAllowed = 2.0,
-	})
+        PinPos[i] = self:AddInput("Position", "Pin" .. i, {
+            LINKID_DataType = "Point",
+            INPID_InputControl = "OffsetControl",
+            INPID_PreviewControl = "PointControl",
+            INP_DefaultX = 0.5,
+            INP_DefaultY = 0.5,
+            INP_DoNotifyChanged = true,
+        })
+        PinPos[i]:SetAttrs({ PC_Visible = true })
 
-	-- Main image output
-	OutImage = self:AddOutput("Output", "Output", {
-		LINKID_DataType = "Image",
-		LINK_Main = 1
-	})
+        PinStrength[i] = self:AddInput("Strength", "Strength" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "SliderControl",
+            INP_MinScale = -0.2,
+            INP_MaxScale = 0.2,
+            INP_MinAllowed = -1.0,
+            INP_MaxAllowed = 1.0,
+            INP_Default = 0.08,
+        })
+
+        PinRadius[i] = self:AddInput("Radius", "Radius" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "SliderControl",
+            INP_MinScale = 0.01,
+            INP_MaxScale = 1.0,
+            INP_MinAllowed = 0.001,
+            INP_MaxAllowed = 2.0,
+            INP_Default = 0.20,
+        })
+
+        self:EndControlNest()
+    end
+
+    -- Main image output
+    OutImage = self:AddOutput("Output", "Output", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1
+    })
+end
+
+local function clamp(v, lo, hi)
+    if v < lo then return lo end
+    if v > hi then return hi end
+    return v
+end
+
+local function inputNumber(inp, req, def)
+    local ok, v = pcall(function() return inp:GetValue(req) end)
+    if (not ok) or v == nil then return def end
+
+    if type(v) == "number" then return v end
+
+    local okVal, vv = pcall(function() return v.Value end)
+    if okVal and type(vv) == "number" then return vv end
+
+    local n = tonumber(v)
+    if n ~= nil then return n end
+    return def
+end
+
+local function inputPoint(inp, req, defX, defY)
+    local ok, p = pcall(function() return inp:GetValue(req) end)
+    if (not ok) or p == nil then return defX, defY end
+
+    local x, y
+
+    if type(p) == "table" then
+        x = p.X or p[1]
+        y = p.Y or p[2]
+    else
+        local okx, vx = pcall(function() return p.X end)
+        local oky, vy = pcall(function() return p.Y end)
+        if okx then x = vx end
+        if oky then y = vy end
+    end
+
+    x = tonumber(x) or defX
+    y = tonumber(y) or defY
+
+    return x, y
 end
 
 -- Main Process Function
 function Process(req)
-	local img = InImage:GetValue(req)
-	if not img then return end
+    local img = InImage:GetValue(req)
+    if not img then return end
 
-	local function num(v, d)
-		if type(v) == "table" and v.Value ~= nil then v = v.Value end
-		v = tonumber(v)
-		if v == nil then return d end
-		return v
-	end
+    local w = tonumber(img.Width)
+    local h = tonumber(img.Height)
+    if not w or not h then
+        OutImage:Set(req, img)
+        return
+    end
 
-	local function clamp(v, lo, hi)
-		if v < lo then return lo end
-		if v > hi then return hi end
-		return v
-	end
+    local minDim = math.min(w, h)
+    local pins = {}
 
-	local w = tonumber(img.Width)
-	local h = tonumber(img.Height)
-	if not w or not h then
-		OutImage:Set(req, img)
-		return
-	end
+    for i = 1, MAX_PINS do
+        local enabled = inputNumber(PinEnabled[i], req, (i == 1) and 1 or 0)
+        if enabled >= 0.5 then
+            local xNorm, yNorm = inputPoint(PinPos[i], req, 0.5, 0.5)
+            local strength = inputNumber(PinStrength[i], req, 0.08)
+            local radiusN = clamp(inputNumber(PinRadius[i], req, 0.20), 0.001, 2.0)
+            local radiusPx = math.max(1.0, radiusN * minDim)
 
-	local p = Pin:GetValue(req)
-	local pxNorm = num(p and (p.X or p[1]), 0.5)
-	local pyNorm = num(p and (p.Y or p[2]), 0.5)
-	local px = pxNorm * w
-	local py = pyNorm * h
+            if math.abs(strength) > 1e-6 and radiusPx > 1.0 then
+                pins[#pins + 1] = {
+                    px = xNorm * w,
+                    py = yNorm * h,
+                    strength = strength,
+                    radius = radiusPx,
+                }
+            end
+        end
+    end
 
-	local function inputNumber(inp, req, def)
-	local v = inp:GetValue(req)
-	if v == nil then return def end
-	if type(v) == "number" then return v end
+    if #pins == 0 then
+        OutImage:Set(req, img)
+        return
+    end
 
-	-- Works for userdata/cdata objects that expose .Value
-	local ok, vv = pcall(function() return v.Value end)
-	if ok and type(vv) == "number" then return vv end
+    local x0, y0 = w - 1, h - 1
+    local x1, y1 = 0, 0
 
-	local n = tonumber(v)
-	if n ~= nil then return n end
-	return def
-	end
-	
-	local strength = inputNumber(Strength, req, 0.05)
-	local radiusN  = inputNumber(Radius, req, 0.25)
-	print(string.format("frame=%s strength=%.6f radius=%.6f", tostring(req.Time), strength, radiusN))
-	radiusN = clamp(radiusN, 0.001, 1.0)
-	local radiusPx = math.max(1.0, radiusN * math.min(w, h))
+    for _, pin in ipairs(pins) do
+        x0 = math.min(x0, math.floor(clamp(pin.px - pin.radius, 0, w - 1)))
+        x1 = math.max(x1, math.floor(clamp(pin.px + pin.radius, 0, w - 1)))
+        y0 = math.min(y0, math.floor(clamp(pin.py - pin.radius, 0, h - 1)))
+        y1 = math.max(y1, math.floor(clamp(pin.py + pin.radius, 0, h - 1)))
+    end
 
-	-- If no effective warp, pass through quickly.
-	if math.abs(strength) < 1e-6 or radiusPx <= 1.0 then
-		OutImage:Set(req, img)
-		return
-	end
+    local out = img:CopyOf()
+    local sp = Pixel(img)
+    local dp = Pixel(out)
 
-	local out = img:CopyOf()
-	local sp = Pixel(img)
-	local dp = Pixel(out)
+    for y = y0, y1 do
+        for x = x0, x1 do
+            local totalX, totalY = 0.0, 0.0
+            local affected = false
 
-	local x0 = math.floor(clamp(px - radiusPx, 0, w - 1))
-	local x1 = math.floor(clamp(px + radiusPx, 0, w - 1))
-	local y0 = math.floor(clamp(py - radiusPx, 0, h - 1))
-	local y1 = math.floor(clamp(py + radiusPx, 0, h - 1))
+            for _, pin in ipairs(pins) do
+                local dx = x - pin.px
+                local dy = y - pin.py
+                local dist = math.sqrt(dx * dx + dy * dy)
 
-	for y = y0, y1 do
-		for x = x0, x1 do
-		local dx = x - px
-		local dy = y - py
-		local dist = math.sqrt(dx * dx + dy * dy)
+                if dist < pin.radius then
+                    local falloff = 1.0 - (dist / pin.radius)
+                    local ux, uy = 0.0, 0.0
+                    if dist > 1e-6 then
+                        ux = dx / dist
+                        uy = dy / dist
+                    end
 
-		if dist < radiusPx then
-			local falloff = 1.0 - (dist / radiusPx)
-			local ux, uy = 0.0, 0.0
-			if dist > 1e-6 then
-			ux = dx / dist
-			uy = dy / dist
-			end
+                    local force = pin.strength * pin.radius * falloff
+                    totalX = totalX + (ux * force)
+                    totalY = totalY + (uy * force)
+                    affected = true
+                end
+            end
 
-			local force = strength * radiusPx * falloff
-			local sx = clamp(x - ux * force, 0, w - 1)
-			local sy = clamp(y - uy * force, 0, h - 1)
+            if affected then
+                local sx = clamp(x - totalX, 0, w - 1)
+                local sy = clamp(y - totalY, 0, h - 1)
 
-			img:SamplePixelB(sx, sy, sp)
-			dp.R, dp.G, dp.B, dp.A = sp.R, sp.G, sp.B, sp.A
-			out:SetPixel(x, y, dp)
-		end
-		end
-	end
+                img:SamplePixelB(sx, sy, sp)
+                dp.R = sp.R
+                dp.G = sp.G
+                dp.B = sp.B
+                dp.A = sp.A
+                out:SetPixel(x, y, dp)
+            end
+        end
+    end
 
-	OutImage:Set(req, out)
+    OutImage:Set(req, out)
 end
-

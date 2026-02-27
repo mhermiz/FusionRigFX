@@ -1,0 +1,511 @@
+-- Register the Fuse
+FuRegisterClass("PuppetPin", CT_Tool, {
+    REGS_Name = "Puppet Pin",
+    REGS_Category = "Custom",
+    REGS_OpIconString = "PP1",
+})
+
+local MAX_PINS = 4
+PinEnabled = {}
+PinPos = {}
+PinStrength = {}
+PinRadius = {}
+
+InFalloffMode = nil
+InInfluenceMode = nil
+InMaxDisplace = nil
+InQualityMode = nil
+InDebugOverlay = nil
+InDebugAlpha = nil
+InRootLockEnable = nil
+InRootLockPos = nil
+InRootLockRadius = nil
+InRootLockStrength = nil
+
+-- Create Inputs/Outputs
+function Create()
+    -- Image input
+    InImage = self:AddInput("Image", "Image", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1
+    })
+
+    self:BeginControlNest("Deformation", "DeformationNest", true, {})
+
+    InFalloffMode = self:AddInput("Falloff Mode", "FalloffMode", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ComboControl",
+        INP_Integer = true,
+        INP_Default = 1,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 2,
+        { CCS_AddString = "Linear", },
+        { CCS_AddString = "Smoothstep", },
+        { CCS_AddString = "Gaussian", },
+    })
+
+    InInfluenceMode = self:AddInput("Influence Mode", "InfluenceMode", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ComboControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 2,
+        { CCS_AddString = "Sum", },
+        { CCS_AddString = "Max", },
+        { CCS_AddString = "Normalized Sum", },
+    })
+
+    InMaxDisplace = self:AddInput("Max Displacement", "MaxDisplacement", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.01,
+        INP_MaxScale = 0.50,
+        INP_MinAllowed = 0.001,
+        INP_MaxAllowed = 2.0,
+        INP_Default = 0.20,
+    })
+
+    InQualityMode = self:AddInput("Quality", "QualityMode", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ComboControl",
+        INP_Integer = true,
+        INP_Default = 1,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 1,
+        { CCS_AddString = "Draft", },
+        { CCS_AddString = "High", },
+    })
+
+    InDebugOverlay = self:AddInput("Show Influence Overlay", "DebugOverlay", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_DoNotifyChanged = true,
+    })
+
+    InDebugAlpha = self:AddInput("Overlay Opacity", "DebugAlpha", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.01,
+        INP_MaxScale = 1.0,
+        INP_MinAllowed = 0.0,
+        INP_MaxAllowed = 1.0,
+        INP_Default = 0.35,
+        IC_Visible = false,
+    })
+
+    self:EndControlNest()
+
+    self:BeginControlNest("Root Lock", "RootLockNest", false, {})
+
+    InRootLockEnable = self:AddInput("Enable Root Lock", "RootLockEnable", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_DoNotifyChanged = true,
+    })
+
+    InRootLockPos = self:AddInput("Root Position", "RootLockPos", {
+        LINKID_DataType = "Point",
+        INPID_InputControl = "OffsetControl",
+        INPID_PreviewControl = "CrosshairControl",
+        INP_DefaultX = 0.5,
+        INP_DefaultY = 0.5,
+        INP_DoNotifyChanged = true,
+        IC_Visible = false,
+    })
+    InRootLockPos:SetAttrs({ PC_Visible = false })
+
+    InRootLockRadius = self:AddInput("Root Radius", "RootLockRadius", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.01,
+        INP_MaxScale = 1.0,
+        INP_MinAllowed = 0.001,
+        INP_MaxAllowed = 2.0,
+        INP_Default = 0.15,
+        IC_Visible = false,
+    })
+
+    InRootLockStrength = self:AddInput("Root Strength", "RootLockStrength", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.0,
+        INP_MaxScale = 1.0,
+        INP_MinAllowed = 0.0,
+        INP_MaxAllowed = 1.0,
+        INP_Default = 1.0,
+        IC_Visible = false,
+    })
+
+    self:EndControlNest()
+
+    for i = 1, MAX_PINS do
+        self:BeginControlNest("Pin " .. i, "PinNest" .. i, i == 1, {})
+
+        PinEnabled[i] = self:AddInput("Enable", "Enable" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "CheckboxControl",
+            INP_Integer = true,
+            INP_Default = (i == 1) and 1 or 0,
+            INP_DoNotifyChanged = true,
+        })
+
+        PinPos[i] = self:AddInput("Position", "Pin" .. i, {
+            LINKID_DataType = "Point",
+            INPID_InputControl = "OffsetControl",
+            INPID_PreviewControl = "PointControl",
+            INP_DefaultX = 0.5,
+            INP_DefaultY = 0.5,
+            INP_DoNotifyChanged = true,
+            IC_Visible = (i == 1),
+        })
+        PinPos[i]:SetAttrs({ PC_Visible = (i == 1) })
+
+        PinStrength[i] = self:AddInput("Strength", "Strength" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "SliderControl",
+            INP_MinScale = -0.2,
+            INP_MaxScale = 0.2,
+            INP_MinAllowed = -1.0,
+            INP_MaxAllowed = 1.0,
+            INP_Default = 0.08,
+            IC_Visible = (i == 1),
+        })
+
+        PinRadius[i] = self:AddInput("Radius", "Radius" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "SliderControl",
+            INP_MinScale = 0.01,
+            INP_MaxScale = 1.0,
+            INP_MinAllowed = 0.001,
+            INP_MaxAllowed = 2.0,
+            INP_Default = 0.20,
+            IC_Visible = (i == 1),
+        })
+
+        self:EndControlNest()
+    end
+
+    -- Main image output
+    OutImage = self:AddOutput("Output", "Output", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1
+    })
+end
+
+local function setPinUiVisible(i, enabled)
+    local show = enabled and true or false
+    PinPos[i]:SetAttrs({ IC_Visible = show, PC_Visible = show })
+    PinStrength[i]:SetAttrs({ IC_Visible = show })
+    PinRadius[i]:SetAttrs({ IC_Visible = show })
+end
+
+local function setDebugUiVisible(enabled)
+    InDebugAlpha:SetAttrs({ IC_Visible = enabled and true or false })
+end
+
+local function setRootLockUiVisible(enabled)
+    local show = enabled and true or false
+    InRootLockPos:SetAttrs({ IC_Visible = show, PC_Visible = show })
+    InRootLockRadius:SetAttrs({ IC_Visible = show })
+    InRootLockStrength:SetAttrs({ IC_Visible = show })
+end
+
+function NotifyChanged(inp, param, time)
+    if param == nil then return end
+
+    for i = 1, MAX_PINS do
+        if inp == PinEnabled[i] then
+            setPinUiVisible(i, param.Value >= 0.5)
+            return
+        end
+    end
+
+    if inp == InDebugOverlay then
+        setDebugUiVisible(param.Value >= 0.5)
+        return
+    end
+
+    if inp == InRootLockEnable then
+        setRootLockUiVisible(param.Value >= 0.5)
+    end
+end
+
+local function pinDebugColor(i)
+    if i == 1 then return 1.0, 0.35, 0.35 end
+    if i == 2 then return 0.35, 1.0, 0.35 end
+    if i == 3 then return 0.35, 0.65, 1.0 end
+    return 1.0, 0.75, 0.25
+end
+
+local function clamp(v, lo, hi)
+    if v < lo then return lo end
+    if v > hi then return hi end
+    return v
+end
+
+local function inputNumber(inp, req, def)
+    local ok, v = pcall(function() return inp:GetValue(req) end)
+    if (not ok) or v == nil then return def end
+
+    if type(v) == "number" then return v end
+
+    local okVal, vv = pcall(function() return v.Value end)
+    if okVal and type(vv) == "number" then return vv end
+
+    local n = tonumber(v)
+    if n ~= nil then return n end
+    return def
+end
+
+local function inputPoint(inp, req, defX, defY)
+    local ok, p = pcall(function() return inp:GetValue(req) end)
+    if (not ok) or p == nil then return defX, defY end
+
+    local x, y
+
+    if type(p) == "table" then
+        x = p.X or p[1]
+        y = p.Y or p[2]
+    else
+        local okx, vx = pcall(function() return p.X end)
+        local oky, vy = pcall(function() return p.Y end)
+        if okx then x = vx end
+        if oky then y = vy end
+    end
+
+    x = tonumber(x) or defX
+    y = tonumber(y) or defY
+
+    return x, y
+end
+
+local function computeFalloff(mode, t)
+    -- t: 0 at pin center, 1 at radius edge
+    t = clamp(t, 0.0, 1.0)
+
+    if mode == 0 then
+        return 1.0 - t
+    elseif mode == 1 then
+        local s = 1.0 - t
+        return s * s * (3.0 - (2.0 * s))
+    else
+        local edge = math.exp(-4.5)
+        local g = (math.exp(-4.5 * t * t) - edge) / (1.0 - edge)
+        return clamp(g, 0.0, 1.0)
+    end
+end
+
+-- Main Process Function
+function Process(req)
+    local img = InImage:GetValue(req)
+    if not img then return end
+
+    local w = tonumber(img.Width)
+    local h = tonumber(img.Height)
+    if not w or not h then
+        OutImage:Set(req, img)
+        return
+    end
+
+    local minDim = math.min(w, h)
+    local falloffMode = math.floor(clamp(inputNumber(InFalloffMode, req, 1), 0, 2))
+    local influenceMode = math.floor(clamp(inputNumber(InInfluenceMode, req, 0), 0, 2))
+    local maxDisplaceN = clamp(inputNumber(InMaxDisplace, req, 0.20), 0.001, 2.0)
+    local maxDisplacePx = maxDisplaceN * minDim
+    local qualityMode = math.floor(clamp(inputNumber(InQualityMode, req, 1), 0, 1))
+    local debugOverlay = inputNumber(InDebugOverlay, req, 0) >= 0.5
+    local debugAlpha = clamp(inputNumber(InDebugAlpha, req, 0.35), 0.0, 1.0)
+    local rootLockEnabled = inputNumber(InRootLockEnable, req, 0) >= 0.5
+    local rootLockStrength = clamp(inputNumber(InRootLockStrength, req, 1.0), 0.0, 1.0)
+
+    local rootPx, rootPy, rootRadiusPx = 0.0, 0.0, 1.0
+    if rootLockEnabled and rootLockStrength > 1e-6 then
+        local rxNorm, ryNorm = inputPoint(InRootLockPos, req, 0.5, 0.5)
+        local rootRadiusN = clamp(inputNumber(InRootLockRadius, req, 0.15), 0.001, 2.0)
+        rootPx = rxNorm * w
+        rootPy = ryNorm * h
+        rootRadiusPx = math.max(1.0, rootRadiusN * minDim)
+    else
+        rootLockEnabled = false
+    end
+
+    local pins = {}
+
+    for i = 1, MAX_PINS do
+        local enabled = inputNumber(PinEnabled[i], req, (i == 1) and 1 or 0)
+        if enabled >= 0.5 then
+            local xNorm, yNorm = inputPoint(PinPos[i], req, 0.5, 0.5)
+            local strength = inputNumber(PinStrength[i], req, 0.08)
+            local radiusN = clamp(inputNumber(PinRadius[i], req, 0.20), 0.001, 2.0)
+            local radiusPx = math.max(1.0, radiusN * minDim)
+
+            if math.abs(strength) > 1e-6 and radiusPx > 1.0 then
+                pins[#pins + 1] = {
+                    idx = i,
+                    px = xNorm * w,
+                    py = yNorm * h,
+                    strength = strength,
+                    radius = radiusPx,
+                }
+            end
+        end
+    end
+
+    if #pins == 0 then
+        OutImage:Set(req, img)
+        return
+    end
+
+    local x0, y0 = w - 1, h - 1
+    local x1, y1 = 0, 0
+
+    for _, pin in ipairs(pins) do
+        x0 = math.min(x0, math.floor(clamp(pin.px - pin.radius, 0, w - 1)))
+        x1 = math.max(x1, math.floor(clamp(pin.px + pin.radius, 0, w - 1)))
+        y0 = math.min(y0, math.floor(clamp(pin.py - pin.radius, 0, h - 1)))
+        y1 = math.max(y1, math.floor(clamp(pin.py + pin.radius, 0, h - 1)))
+    end
+
+    local out = img:CopyOf()
+    local sp = Pixel(img)
+    local dp = Pixel(out)
+
+    for y = y0, y1 do
+        for x = x0, x1 do
+            local totalX, totalY = 0.0, 0.0
+            local affected = false
+            local maxAbsForce = -1.0
+            local normWeight = 0.0
+            local dbgR, dbgG, dbgB = 0.0, 0.0, 0.0
+            local dbgW = 0.0
+            local rootDbgW = 0.0
+
+            for _, pin in ipairs(pins) do
+                local dx = x - pin.px
+                local dy = y - pin.py
+                local dist = math.sqrt(dx * dx + dy * dy)
+
+                if dist < pin.radius then
+                    local t = dist / pin.radius
+                    local falloff = computeFalloff(falloffMode, t)
+
+                    if falloff > 1e-6 then
+                        local ux, uy = 0.0, 0.0
+                        if dist > 1e-6 then
+                            ux = dx / dist
+                            uy = dy / dist
+                        end
+
+                        local force = pin.strength * pin.radius * falloff
+                        local fx = ux * force
+                        local fy = uy * force
+                        local absForce = math.abs(force)
+
+                        affected = true
+
+                        if debugOverlay then
+                            local cr, cg, cb = pinDebugColor(pin.idx)
+                            dbgR = dbgR + (cr * falloff)
+                            dbgG = dbgG + (cg * falloff)
+                            dbgB = dbgB + (cb * falloff)
+                            dbgW = dbgW + falloff
+                        end
+
+                        if influenceMode == 1 then
+                            if absForce > maxAbsForce then
+                                maxAbsForce = absForce
+                                totalX = fx
+                                totalY = fy
+                            end
+                        else
+                            totalX = totalX + fx
+                            totalY = totalY + fy
+                            if influenceMode == 2 then
+                                normWeight = normWeight + falloff
+                            end
+                        end
+                    end
+                end
+            end
+
+            if affected then
+                if influenceMode == 2 and normWeight > 1e-6 then
+                    totalX = totalX / normWeight
+                    totalY = totalY / normWeight
+                end
+
+                if rootLockEnabled then
+                    local rdx = x - rootPx
+                    local rdy = y - rootPy
+                    local rdist = math.sqrt(rdx * rdx + rdy * rdy)
+
+                    if rdist < rootRadiusPx then
+                        local rt = rdist / rootRadiusPx
+                        local rootFalloff = computeFalloff(1, rt)
+                        if debugOverlay then
+                            rootDbgW = rootFalloff
+                        end
+                        local lockAmount = clamp(rootLockStrength * rootFalloff, 0.0, 1.0)
+                        local keep = 1.0 - lockAmount
+                        totalX = totalX * keep
+                        totalY = totalY * keep
+                    end
+                end
+
+                local dispMag = math.sqrt(totalX * totalX + totalY * totalY)
+                if dispMag > maxDisplacePx and dispMag > 1e-6 then
+                    local s = maxDisplacePx / dispMag
+                    totalX = totalX * s
+                    totalY = totalY * s
+                end
+
+                local sx = clamp(x - totalX, 0, w - 1)
+                local sy = clamp(y - totalY, 0, h - 1)
+
+                if qualityMode == 0 then
+                    img:GetPixel(math.floor(sx + 0.5), math.floor(sy + 0.5), sp)
+                else
+                    img:SamplePixelB(sx, sy, sp)
+                end
+                dp.R = sp.R
+                dp.G = sp.G
+                dp.B = sp.B
+                dp.A = sp.A
+
+                if debugOverlay then
+                    local ovR, ovG, ovB, ovA = 0.0, 0.0, 0.0, 0.0
+
+                    if dbgW > 1e-6 then
+                        ovR = dbgR / dbgW
+                        ovG = dbgG / dbgW
+                        ovB = dbgB / dbgW
+                        ovA = clamp(debugAlpha * clamp(dbgW, 0.0, 1.0), 0.0, 1.0)
+                    end
+
+                    if rootDbgW > 1e-6 then
+                        local rootA = clamp(debugAlpha * 0.8 * rootDbgW, 0.0, 1.0)
+                        local rr, rg, rb = 1.0, 0.95, 0.25
+                        ovR = (ovR * ovA) + (rr * rootA)
+                        ovG = (ovG * ovA) + (rg * rootA)
+                        ovB = (ovB * ovA) + (rb * rootA)
+                        ovA = clamp(ovA + rootA, 0.0, 1.0)
+                    end
+
+                    if ovA > 1e-6 then
+                        dp.R = (dp.R * (1.0 - ovA)) + (ovR * ovA)
+                        dp.G = (dp.G * (1.0 - ovA)) + (ovG * ovA)
+                        dp.B = (dp.B * (1.0 - ovA)) + (ovB * ovA)
+                    end
+                end
+                out:SetPixel(x, y, dp)
+            end
+        end
+    end
+
+    OutImage:Set(req, out)
+end

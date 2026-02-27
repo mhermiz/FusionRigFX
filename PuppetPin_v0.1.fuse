@@ -1,0 +1,149 @@
+-- Register the Fuse
+FuRegisterClass("PuppetPinPhase1", CT_Tool, {
+    REGS_Name = "Puppet Pin Phase 1",
+    REGS_Category = "Custom",
+    REGS_OpIconString = "PP1",
+})
+
+-- Create Inputs/Outputs
+function Create()
+	-- Image input
+	InImage = self:AddInput("Image", "Image", {
+		LINKID_DataType = "Image",
+		LINK_Main = 1
+	})
+
+	-- Draggable Pin
+	Pin = self:AddInput("Pin", "Pin", {
+		LINKID_DataType      = "Point",
+		INPID_InputControl   = "OffsetControl",
+		INPID_PreviewControl = "PointControl",
+		INP_DefaultX         = 0.5,
+		INP_DefaultY         = 0.5,
+		INP_DoNotifyChanged  = true,
+	})
+	Pin:SetAttrs({ PC_Visible = true })
+
+	-- Strength slider
+	Strength = self:AddInput("Strength", "Strength", {
+		LINKID_DataType = "Number",
+		INPID_InputControl = "SliderControl",
+		INP_MinScale = -0.2,
+		INP_MaxScale = 0.2,
+		INP_Default = 0.05,
+		INP_MinAllowed = -1.0,
+		INP_MaxAllowed = 1.0
+	})
+
+	-- Radius slider
+	Radius = self:AddInput("Radius", "Radius", {
+		LINKID_DataType = "Number",
+		INPID_InputControl = "SliderControl",
+		INP_MinScale = 0.01,
+		INP_MaxScale = 1.0,
+		INP_Default = 0.25,
+		INP_MinAllowed = 0.001,
+		INP_MaxAllowed = 2.0,
+	})
+
+	-- Main image output
+	OutImage = self:AddOutput("Output", "Output", {
+		LINKID_DataType = "Image",
+		LINK_Main = 1
+	})
+end
+
+-- Main Process Function
+function Process(req)
+	local img = InImage:GetValue(req)
+	if not img then return end
+
+	local function num(v, d)
+		if type(v) == "table" and v.Value ~= nil then v = v.Value end
+		v = tonumber(v)
+		if v == nil then return d end
+		return v
+	end
+
+	local function clamp(v, lo, hi)
+		if v < lo then return lo end
+		if v > hi then return hi end
+		return v
+	end
+
+	local w = tonumber(img.Width)
+	local h = tonumber(img.Height)
+	if not w or not h then
+		OutImage:Set(req, img)
+		return
+	end
+
+	local p = Pin:GetValue(req)
+	local pxNorm = num(p and (p.X or p[1]), 0.5)
+	local pyNorm = num(p and (p.Y or p[2]), 0.5)
+	local px = pxNorm * w
+	local py = pyNorm * h
+
+	local function inputNumber(inp, req, def)
+	local v = inp:GetValue(req)
+	if v == nil then return def end
+	if type(v) == "number" then return v end
+
+	-- Works for userdata/cdata objects that expose .Value
+	local ok, vv = pcall(function() return v.Value end)
+	if ok and type(vv) == "number" then return vv end
+
+	local n = tonumber(v)
+	if n ~= nil then return n end
+	return def
+	end
+	
+	local strength = inputNumber(Strength, req, 0.05)
+	local radiusN  = inputNumber(Radius, req, 0.25)
+	print(string.format("frame=%s strength=%.6f radius=%.6f", tostring(req.Time), strength, radiusN))
+	radiusN = clamp(radiusN, 0.001, 1.0)
+	local radiusPx = math.max(1.0, radiusN * math.min(w, h))
+
+	-- If no effective warp, pass through quickly.
+	if math.abs(strength) < 1e-6 or radiusPx <= 1.0 then
+		OutImage:Set(req, img)
+		return
+	end
+
+	local out = img:CopyOf()
+	local sp = Pixel(img)
+	local dp = Pixel(out)
+
+	local x0 = math.floor(clamp(px - radiusPx, 0, w - 1))
+	local x1 = math.floor(clamp(px + radiusPx, 0, w - 1))
+	local y0 = math.floor(clamp(py - radiusPx, 0, h - 1))
+	local y1 = math.floor(clamp(py + radiusPx, 0, h - 1))
+
+	for y = y0, y1 do
+		for x = x0, x1 do
+		local dx = x - px
+		local dy = y - py
+		local dist = math.sqrt(dx * dx + dy * dy)
+
+		if dist < radiusPx then
+			local falloff = 1.0 - (dist / radiusPx)
+			local ux, uy = 0.0, 0.0
+			if dist > 1e-6 then
+			ux = dx / dist
+			uy = dy / dist
+			end
+
+			local force = strength * radiusPx * falloff
+			local sx = clamp(x - ux * force, 0, w - 1)
+			local sy = clamp(y - uy * force, 0, h - 1)
+
+			img:SamplePixelB(sx, sy, sp)
+			dp.R, dp.G, dp.B, dp.A = sp.R, sp.G, sp.B, sp.A
+			out:SetPixel(x, y, dp)
+		end
+		end
+	end
+
+	OutImage:Set(req, out)
+end
+
