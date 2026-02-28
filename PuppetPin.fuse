@@ -1968,8 +1968,8 @@ function Process(req)
 
     end
 
-    -- Keep pin markers visible while dragging, regardless of overlay mode.
-    if #pins > 0 then
+    -- Tie pin marker visibility to the same toggle as influence overlay.
+    if liveDebugOverlay and #pins > 0 then
         for i = 1, #pins do
             local r, g, b = pinDebugColor(pins[i].idx)
             drawPinMarker(out, pins[i].px, pins[i].py, w, h, r, g, b)
