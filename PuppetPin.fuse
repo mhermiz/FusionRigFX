@@ -43,7 +43,6 @@ InWeightMask = nil
 InUseWeightMask = nil
 InWeightMaskLock = nil
 InRigMode = nil
-InBindPinsButton = nil
 InLocatorEnable = nil
 InLocatorMode = nil
 
@@ -52,6 +51,7 @@ MeshCache = {
     region = nil,
     verts = nil,
     tris = nil,
+    mask = nil,
 }
 
 RebuildMeshScript = [[
@@ -60,8 +60,15 @@ MeshCache.key = nil
 
 MeshPreviewCountdown = 0
 PinBindPose = {}
-PendingBindPins = false
-LastBindButtonValue = 0
+DeformCache = { verts = {} }
+RuntimeCache = {
+    pins = {},
+    activePins = {},
+    prevPinX = {},
+    prevPinY = {},
+    interactHold = 0,
+    frame = 0,
+}
 
 -- Create Inputs/Outputs
 function Create()
@@ -218,12 +225,12 @@ function Create()
 
     self:EndControlNest()
 
-    -- Create tab order: Mesh, Pins, Deformers, Solver, Locators, Settings
+    -- Create tab order: Mesh, Pins, Deformers, Solver, Locators, Overlay
     self:AddControlPage("Pins")
     self:AddControlPage("Deformers")
     self:AddControlPage("Solver")
     self:AddControlPage("Locators")
-    self:AddControlPage("Settings")
+    self:AddControlPage("Overlay")
     self:AddControlPage("Solver")
 
     InFalloffMode = self:AddInput("Falloff Mode", "FalloffMode", {
@@ -260,7 +267,7 @@ function Create()
         INP_Default = 0.20,
     })
 
-    self:AddControlPage("Settings")
+    self:AddControlPage("Overlay")
 
     InQualityMode = self:AddInput("Quality", "QualityMode", {
         LINKID_DataType = "Number",
@@ -371,11 +378,6 @@ function Create()
         INP_DoNotifyChanged = true,
         { CCS_AddString = "Setup", },
         { CCS_AddString = "Animate", },
-    })
-    InBindPinsButton = self:AddInput("Bind Pins", "BindPins", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "ButtonControl",
-        INP_DoNotifyChanged = true,
     })
     InUseWeightMask = self:AddInput("Use Weight Mask", "UseWeightMask", {
         LINKID_DataType = "Number",
@@ -519,12 +521,6 @@ function NotifyChanged(inp, param, time)
         return
     end
 
-    if inp == InBindPinsButton then
-        PendingBindPins = true
-        MeshPreviewCountdown = 120
-        return
-    end
-
     if inp == InUseMeshMask or inp == InMeshRebuild or inp == InMaskAlphaThreshold or inp == InMaskDownsample or inp == InMeshInteriorDensity or inp == InMeshInteriorJitter or inp == InMeshContourDensity or inp == InMeshExpand then
         MeshCache.key = nil
         MeshPreviewCountdown = 120
@@ -565,10 +561,31 @@ function NotifyChanged(inp, param, time)
 end
 
 local function pinDebugColor(i)
-    if i == 1 then return 1.0, 0.35, 0.35 end
-    if i == 2 then return 0.35, 1.0, 0.35 end
-    if i == 3 then return 0.35, 0.65, 1.0 end
-    return 1.0, 0.75, 0.25
+    -- Deterministic hue wheel so each pin gets a distinct color across many pins.
+    local h = ((i - 1) * 0.61803398875) % 1.0
+    local s = 0.78
+    local v = 1.0
+    local c = v * s
+    local hp = h * 6.0
+    local x = c * (1.0 - math.abs((hp % 2.0) - 1.0))
+    local r, g, b = 0.0, 0.0, 0.0
+
+    if hp < 1.0 then
+        r, g, b = c, x, 0.0
+    elseif hp < 2.0 then
+        r, g, b = x, c, 0.0
+    elseif hp < 3.0 then
+        r, g, b = 0.0, c, x
+    elseif hp < 4.0 then
+        r, g, b = 0.0, x, c
+    elseif hp < 5.0 then
+        r, g, b = x, 0.0, c
+    else
+        r, g, b = c, 0.0, x
+    end
+
+    local m = v - c
+    return r + m, g + m, b + m
 end
 
 local function clamp(v, lo, hi)
@@ -641,6 +658,29 @@ local function buildMaskRegion(maskImg, w, h, expandN, alphaThreshold, downsampl
         x1 = clamp(maxX + expandPx, 0, w - 1),
         y1 = clamp(maxY + expandPx, 0, h - 1),
     }
+end
+
+local function buildMaskCache(maskImg, region, alphaThreshold)
+    local w = maskImg.Width
+    local h = maskImg.Height
+    local x0 = clamp(math.floor(region.x0), 0, w - 1)
+    local y0 = clamp(math.floor(region.y0), 0, h - 1)
+    local x1 = clamp(math.floor(region.x1), 0, w - 1)
+    local y1 = clamp(math.floor(region.y1), 0, h - 1)
+    local rw = math.max(1, x1 - x0 + 1)
+    local rh = math.max(1, y1 - y0 + 1)
+    local thr = alphaThreshold or 0.01
+    local p = Pixel(maskImg)
+    local data = {}
+    local idx = 1
+    for y = y0, y1 do
+        for x = x0, x1 do
+            maskImg:GetPixel(x, y, p)
+            data[idx] = (maskValueAtPixel(p) > thr) and 1 or 0
+            idx = idx + 1
+        end
+    end
+    return { x0 = x0, y0 = y0, x1 = x1, y1 = y1, w = rw, h = rh, data = data }
 end
 
 local function extractContourPoints(maskImg, region, alphaThreshold, contourSpacing, borderExpandPx)
@@ -1278,6 +1318,31 @@ local function drawMeshLine(out, x0, y0, x1, y1, w, h, thickness, pix)
     end
 end
 
+local function drawPinMarker(out, px, py, w, h, r, g, b)
+    local outer = Pixel(out)
+    outer.R = 1.0
+    outer.G = 1.0
+    outer.B = 1.0
+    outer.A = 1.0
+
+    local cross = Pixel(out)
+    cross.R = math.max(0.0, math.min(1.0, r or 1.0))
+    cross.G = math.max(0.0, math.min(1.0, g or 0.2))
+    cross.B = math.max(0.0, math.min(1.0, b or 0.2))
+    cross.A = 1.0
+
+    local x = math.floor(px + 0.5)
+    local y = math.floor(py + 0.5)
+
+    -- Opaque white backing prevents red mesh/overlay bleed near the handle.
+    drawMeshPoint(out, x, y, w, h, 10, outer)
+
+    -- Small crosshair to keep pins visible over dense red mesh lines.
+    drawMeshLine(out, x - 16, y, x + 16, y, w, h, 2, cross)
+    drawMeshLine(out, x, y - 16, x, y + 16, w, h, 2, cross)
+    drawMeshPoint(out, x, y, w, h, 2, cross)
+end
+
 local function inputNumber(inp, req, def)
     local ok, v = pcall(function() return inp:GetValue(req) end)
     if (not ok) or v == nil then return def end
@@ -1341,9 +1406,8 @@ local function computePinDisplacementAt(x, y, pins, influenceMode, falloffMode, 
             goto continue_pin
         end
 
-        -- Influence is evaluated from bind pose so moving a pin translates attached area like a joint.
-        local dx = x - pin.bindX
-        local dy = y - pin.bindY
+        local dx = x - pin.px
+        local dy = y - pin.py
         local dist2 = (dx * dx) + (dy * dy)
         if dist2 < pin.r2 then
             local dist = math.sqrt(dist2)
@@ -1476,6 +1540,12 @@ end
 
 -- Main Process Function
 function Process(req)
+    RuntimeCache.frame = RuntimeCache.frame + 1
+    if (RuntimeCache.frame % 30) == 0 then
+        -- Keep Lua heap from growing during long interactive drags.
+        collectgarbage("step", 64)
+    end
+
     local img = InImage:GetValue(req)
     if not img then return end
 
@@ -1487,8 +1557,14 @@ function Process(req)
     end
 
     local minDim = math.min(w, h)
+    local rigMode = math.floor(clamp(inputNumber(InRigMode, req, 0), 0, 1)) -- 0=Setup, 1=Animate
+    local canDeform = (rigMode == 1)
     local useMeshMask = inputNumber(InUseMeshMask, req, 0) >= 0.5
     local meshRebuild = math.floor(clamp(inputNumber(InMeshRebuild, req, 1), 0, 1))
+    -- Mesh rebuild every frame is expensive; disable it during animate by default.
+    if canDeform and meshRebuild == 1 then
+        meshRebuild = 0
+    end
     local maskAlphaThreshold = clamp(inputNumber(InMaskAlphaThreshold, req, 0.03), 0.0, 1.0)
     local maskDownsample = math.floor(clamp(inputNumber(InMaskDownsample, req, 1), 1, 8))
     local interiorSpacing = clamp(inputNumber(InMeshInteriorDensity, req, 32), 4, 256)
@@ -1524,14 +1600,17 @@ function Process(req)
     if MeshCache.key ~= meshKey then
         local region = buildMaskRegion(meshSrc, w, h, meshExpand, maskAlphaThreshold, maskDownsample)
         local verts, tris = buildGridMesh(region, interiorSpacing, contourSpacing, borderExpandPx, meshSrc, maskAlphaThreshold, interiorJitter)
+        local maskCache = buildMaskCache(meshSrc, region, maskAlphaThreshold)
         MeshCache.key = meshKey
         MeshCache.region = region
         MeshCache.verts = verts
         MeshCache.tris = tris
+        MeshCache.mask = maskCache
     end
     local meshRegion = MeshCache.region
     local meshVerts = MeshCache.verts
     local meshTris = MeshCache.tris
+    local meshMaskCache = MeshCache.mask
 
     local falloffMode = math.floor(clamp(inputNumber(InFalloffMode, req, 1), 0, 2))
     local influenceMode = math.floor(clamp(inputNumber(InInfluenceMode, req, 0), 0, 2))
@@ -1542,13 +1621,6 @@ function Process(req)
     local debugAlpha = clamp(inputNumber(InDebugAlpha, req, 0.35), 0.0, 1.0)
     local rootLockEnabled = inputNumber(InRootLockEnable, req, 0) >= 0.5
     local rootLockStrength = clamp(inputNumber(InRootLockStrength, req, 1.0), 0.0, 1.0)
-    local rigMode = math.floor(clamp(inputNumber(InRigMode, req, 0), 0, 1)) -- 0=Setup, 1=Animate
-    local bindBtnValue = inputNumber(InBindPinsButton, req, 0)
-    if bindBtnValue ~= LastBindButtonValue then
-        PendingBindPins = true
-        LastBindButtonValue = bindBtnValue
-    end
-    local canDeform = (rigMode == 1)
     local useWeightMask = inputNumber(InUseWeightMask, req, 0) >= 0.5
     local weightMaskLock = clamp(inputNumber(InWeightMaskLock, req, 1.0), 0.0, 1.0)
     local weightMaskImg = nil
@@ -1576,7 +1648,15 @@ function Process(req)
         rootLockEnabled = false
     end
 
-    local pins = {}
+    local pins = RuntimeCache.pins
+    local activePins = RuntimeCache.activePins
+    local prevPinX = RuntimeCache.prevPinX
+    local prevPinY = RuntimeCache.prevPinY
+    local pinCount = 0
+    local activePinCount = 0
+    local interacting = false
+    local ax0, ay0 = w - 1, h - 1
+    local ax1, ay1 = 0, 0
 
     for i = 1, MAX_PINS do
         local enabled = inputNumber(PinEnabled[i], req, (i == 1) and 1 or 0)
@@ -1590,69 +1670,118 @@ function Process(req)
             local px = xNorm * w
             local py = yNorm * h
 
-            if PinBindPose[i] == nil or rigMode == 0 or PendingBindPins then
+            local ppx = prevPinX[i]
+            local ppy = prevPinY[i]
+            if ppx ~= nil and ppy ~= nil then
+                local md = math.abs(px - ppx) + math.abs(py - ppy)
+                if md > 0.30 then
+                    interacting = true
+                end
+            end
+            prevPinX[i] = px
+            prevPinY[i] = py
+
+            if PinBindPose[i] == nil or rigMode == 0 then
                 PinBindPose[i] = { x = px, y = py }
             end
 
             if radiusPx > 1.0 then
                 local r = radiusPx
-                pins[#pins + 1] = {
-                    idx = i,
-                    px = px,
-                    py = py,
-                    bindX = PinBindPose[i].x,
-                    bindY = PinBindPose[i].y,
-                    pull = pull,
-                    rotationRad = (rotationDeg * math.pi) / 180.0,
-                    expansion = expansion,
-                    radius = r,
-                    r2 = r * r,
-                    minx = PinBindPose[i].x - r,
-                    maxx = PinBindPose[i].x + r,
-                    miny = PinBindPose[i].y - r,
-                    maxy = PinBindPose[i].y + r,
-                }
+                pinCount = pinCount + 1
+                local p = pins[pinCount]
+                if p == nil then
+                    p = {}
+                    pins[pinCount] = p
+                end
+                p.idx = i
+                p.px = px
+                p.py = py
+                p.bindX = PinBindPose[i].x
+                p.bindY = PinBindPose[i].y
+                p.pull = pull
+                p.rotationRad = (rotationDeg * math.pi) / 180.0
+                p.expansion = expansion
+                p.radius = r
+                p.r2 = r * r
+                p.minx = px - r
+                p.maxx = px + r
+                p.miny = py - r
+                p.maxy = py + r
+                local mdx = p.px - p.bindX
+                local mdy = p.py - p.bindY
+                local activeMag = math.abs(mdx * p.pull) + math.abs(mdy * p.pull) + math.abs(p.rotationRad * p.radius) + math.abs(p.expansion * p.radius)
+                if activeMag > 1e-4 then
+                    activePinCount = activePinCount + 1
+                    activePins[activePinCount] = p
+                    local pad = math.max(2.0, maxDisplacePx * 0.25)
+                    local px0 = math.floor(math.min(p.bindX, p.px) - p.radius - pad)
+                    local py0 = math.floor(math.min(p.bindY, p.py) - p.radius - pad)
+                    local px1 = math.floor(math.max(p.bindX, p.px) + p.radius + pad)
+                    local py1 = math.floor(math.max(p.bindY, p.py) + p.radius + pad)
+                    if px0 < ax0 then ax0 = px0 end
+                    if py0 < ay0 then ay0 = py0 end
+                    if px1 > ax1 then ax1 = px1 end
+                    if py1 > ay1 then ay1 = py1 end
+                end
             end
+        else
+            prevPinX[i] = nil
+            prevPinY[i] = nil
         end
     end
 
-    PendingBindPins = false
+    for i = pinCount + 1, #pins do pins[i] = nil end
+    for i = activePinCount + 1, #activePins do activePins[i] = nil end
 
-    if #pins == 0 and not meshDebug then
+    if pinCount == 0 and not meshDebug then
         OutImage:Set(req, img)
         return
+    end
+
+    if canDeform and activePinCount == 0 and not meshDebug and not debugOverlay then
+        OutImage:Set(req, img)
+        return
+    end
+
+    if activePinCount > 0 then
+        ax0 = clamp(ax0, 0, w - 1)
+        ay0 = clamp(ay0, 0, h - 1)
+        ax1 = clamp(ax1, 0, w - 1)
+        ay1 = clamp(ay1, 0, h - 1)
+    end
+
+    if interacting then
+        RuntimeCache.interactHold = 6
+    elseif RuntimeCache.interactHold > 0 then
+        RuntimeCache.interactHold = RuntimeCache.interactHold - 1
+    end
+    local liveInteracting = (RuntimeCache.interactHold > 0)
+
+    local liveQualityMode = qualityMode
+    local liveDebugOverlay = debugOverlay
+    if canDeform and liveInteracting then
+        -- Interactive drag preview: keep radius unlimited, reduce per-frame cost.
+        liveQualityMode = 0
     end
 
     local out = img:CopyOf()
     local deformedVerts = meshVerts
 
-    if meshVerts and meshTris and #meshVerts >= 3 and #meshTris >= 1 and #pins > 0 and canDeform then
+    if meshVerts and meshTris and #meshVerts >= 3 and #meshTris >= 1 and activePinCount > 0 and canDeform then
         -- Clear original masked subject area first so displaced mesh doesn't leave a ghost behind.
-        local cp = Pixel(out)
-        local mp = Pixel(meshSrc)
-        local mx0 = clamp(math.floor(meshRegion.x0), 0, w - 1)
-        local my0 = clamp(math.floor(meshRegion.y0), 0, h - 1)
-        local mx1 = clamp(math.floor(meshRegion.x1), 0, w - 1)
-        local my1 = clamp(math.floor(meshRegion.y1), 0, h - 1)
-        for y = my0, my1 do
-            for x = mx0, mx1 do
-                meshSrc:GetPixel(x, y, mp)
-                if maskValueAtPixel(mp) > maskAlphaThreshold then
-                    cp.R = 0.0
-                    cp.G = 0.0
-                    cp.B = 0.0
-                    cp.A = 0.0
-                    out:SetPixel(x, y, cp)
-                end
-            end
-        end
-
-        deformedVerts = {}
+        deformedVerts = DeformCache.verts
         for i = 1, #meshVerts do
             local vx = meshVerts[i].x
             local vy = meshVerts[i].y
+            if vx < ax0 or vx > ax1 or vy < ay0 or vy > ay1 then
+                local dv = deformedVerts[i] or {}
+                dv.x = vx
+                dv.y = vy
+                deformedVerts[i] = dv
+                goto continue_vert
+            end
             local dx, dy, moved = computePinDisplacementAt(
-                vx, vy, pins, influenceMode, falloffMode, maxDisplacePx,
+                vx, vy, activePins, influenceMode, falloffMode, maxDisplacePx,
                 rootLockEnabled, rootPx, rootPy, rootRadiusPx, rootLockStrength
             )
             if moved and useWeightMask and weightMaskImg and weightMaskPixel then
@@ -1665,12 +1794,42 @@ function Process(req)
                 dy = dy * keep
             end
             if moved then
-                deformedVerts[i] = {
-                    x = clamp(vx + dx, 0, w - 1),
-                    y = clamp(vy + dy, 0, h - 1),
-                }
+                local dv = deformedVerts[i] or {}
+                dv.x = clamp(vx + dx, 0, w - 1)
+                dv.y = clamp(vy + dy, 0, h - 1)
+                deformedVerts[i] = dv
             else
-                deformedVerts[i] = { x = vx, y = vy }
+                local dv = deformedVerts[i] or {}
+                dv.x = vx
+                dv.y = vy
+                deformedVerts[i] = dv
+            end
+            ::continue_vert::
+        end
+
+        local cp = Pixel(out)
+        local mx0 = clamp(math.max(math.floor(meshRegion.x0), ax0), 0, w - 1)
+        local my0 = clamp(math.max(math.floor(meshRegion.y0), ay0), 0, h - 1)
+        local mx1 = clamp(math.min(math.floor(meshRegion.x1), ax1), 0, w - 1)
+        local my1 = clamp(math.min(math.floor(meshRegion.y1), ay1), 0, h - 1)
+        for y = my0, my1 do
+            for x = mx0, mx1 do
+                local inMask = false
+                if meshMaskCache ~= nil then
+                    local lx = x - meshMaskCache.x0
+                    local ly = y - meshMaskCache.y0
+                    if lx >= 0 and ly >= 0 and lx < meshMaskCache.w and ly < meshMaskCache.h then
+                        local mi = (ly * meshMaskCache.w) + lx + 1
+                        inMask = (meshMaskCache.data[mi] == 1)
+                    end
+                end
+                if inMask then
+                    cp.R = 0.0
+                    cp.G = 0.0
+                    cp.B = 0.0
+                    cp.A = 0.0
+                    out:SetPixel(x, y, cp)
+                end
             end
         end
 
@@ -1684,30 +1843,30 @@ function Process(req)
             local a1 = deformedVerts[t[1]]
             local b1 = deformedVerts[t[2]]
             local c1 = deformedVerts[t[3]]
-            warpMeshTriangle(out, img, a0, b0, c0, a1, b1, c1, w, h, qualityMode, sp, dp)
+            local tx0 = math.min(a1.x, math.min(b1.x, c1.x))
+            local ty0 = math.min(a1.y, math.min(b1.y, c1.y))
+            local tx1 = math.max(a1.x, math.max(b1.x, c1.x))
+            local ty1 = math.max(a1.y, math.max(b1.y, c1.y))
+            if tx1 < ax0 or tx0 > ax1 or ty1 < ay0 or ty0 > ay1 then
+                goto continue_tri
+            end
+            warpMeshTriangle(out, img, a0, b0, c0, a1, b1, c1, w, h, liveQualityMode, sp, dp)
+            ::continue_tri::
         end
 
         -- Fill small transparent holes produced by triangle raster gaps.
-        local bx0, by0 = w - 1, h - 1
-        local bx1, by1 = 0, 0
-        for i = 1, #deformedVerts do
-            local vx = clamp(math.floor(deformedVerts[i].x + 0.5), 0, w - 1)
-            local vy = clamp(math.floor(deformedVerts[i].y + 0.5), 0, h - 1)
-            if vx < bx0 then bx0 = vx end
-            if vy < by0 then by0 = vy end
-            if vx > bx1 then bx1 = vx end
-            if vy > by1 then by1 = vy end
-        end
-        bx0 = math.max(0, bx0 - 2)
-        by0 = math.max(0, by0 - 2)
-        bx1 = math.min(w - 1, bx1 + 2)
-        by1 = math.min(h - 1, by1 + 2)
+        local bx0 = math.max(0, ax0 - 2)
+        local by0 = math.max(0, ay0 - 2)
+        local bx1 = math.min(w - 1, ax1 + 2)
+        local by1 = math.min(h - 1, ay1 + 2)
 
         local p0 = Pixel(out)
         local pn = Pixel(out)
         local pf = Pixel(out)
         local holeFillPasses = 0
-        if qualityMode == 1 then
+        if canDeform and liveInteracting then
+            holeFillPasses = 0
+        elseif qualityMode == 1 then
             if #meshTris > 1800 then
                 holeFillPasses = 1
             else
@@ -1740,7 +1899,7 @@ function Process(req)
                                 end
                             end
                         end
-                        local minNeighbors = (qualityMode == 0) and 4 or 3
+                        local minNeighbors = (liveQualityMode == 0) and 4 or 3
                         if c >= minNeighbors then
                             pf.R = sr / c
                             pf.G = sg / c
@@ -1754,7 +1913,7 @@ function Process(req)
         end
     end
 
-    if debugOverlay and #pins > 0 then
+    if liveDebugOverlay and #pins > 0 then
         local ov = Pixel(out)
         local ip = Pixel(out)
         local overlayScale = clamp(debugAlpha, 0.0, 1.0)
@@ -1807,14 +1966,13 @@ function Process(req)
             end
         end
 
-        local marker = Pixel(out)
-        marker.A = 1.0
+    end
+
+    -- Keep pin markers visible while dragging, regardless of overlay mode.
+    if #pins > 0 then
         for i = 1, #pins do
             local r, g, b = pinDebugColor(pins[i].idx)
-            marker.R = r
-            marker.G = g
-            marker.B = b
-            drawMeshPoint(out, math.floor(pins[i].px + 0.5), math.floor(pins[i].py + 0.5), w, h, 3, marker)
+            drawPinMarker(out, pins[i].px, pins[i].py, w, h, r, g, b)
         end
     end
 
