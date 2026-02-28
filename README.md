@@ -33,7 +33,7 @@ Current build includes:
   - Optional weight-mask locking
 
 ## Installation
-1. Copy `PuppetPin.fuse` into your Fusion Fuses folder.
+1. Copy `PuppetPin_v1.0.fuse` into your Fusion Fuses folder.
 2. Restart DaVinci Resolve/Fusion (or reload Fuses).
 3. Add **Puppet Pin** from the custom tools category.
 
