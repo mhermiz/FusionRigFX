@@ -1,0 +1,2011 @@
+-- Register the Fuse
+FuRegisterClass("PuppetPin", CT_Tool, {
+    REGS_Name = "Puppet Pin",
+    REGS_Category = "Custom",
+    REGS_OpIconString = "PP1",
+})
+
+local MAX_PINS = 32
+PinEnabled = {}
+PinPos = {}
+PinStrength = {}
+PinRadius = {}
+PinRotation = {}
+PinExpansion = {}
+
+InFalloffMode = nil
+InInfluenceMode = nil
+InMaxDisplace = nil
+InQualityMode = nil
+InDebugOverlay = nil
+InDebugAlpha = nil
+InUseMeshMask = nil
+InMeshRebuild = nil
+InRebuildMeshButton = nil
+InMaskAlphaThreshold = nil
+InMaskDownsample = nil
+InMeshInteriorDensity = nil
+InMeshInteriorJitter = nil
+InMeshContourDensity = nil
+InMeshExpand = nil
+InMeshAlwaysDisplay = nil
+InMeshThickness = nil
+InMeshColor = nil
+InMeshColorG = nil
+InMeshColorB = nil
+InMeshAutoColor = nil
+InRootLockEnable = nil
+InRootLockPos = nil
+InRootLockRadius = nil
+InRootLockStrength = nil
+InMeshMask = nil
+InWeightMask = nil
+InUseWeightMask = nil
+InWeightMaskLock = nil
+InRigMode = nil
+InLocatorEnable = nil
+InLocatorMode = nil
+
+MeshCache = {
+    key = nil,
+    region = nil,
+    verts = nil,
+    tris = nil,
+    mask = nil,
+}
+
+RebuildMeshScript = [[
+MeshCache.key = nil
+]]
+
+MeshPreviewCountdown = 0
+PinBindPose = {}
+DeformCache = { verts = {} }
+RuntimeCache = {
+    pins = {},
+    activePins = {},
+    prevPinX = {},
+    prevPinY = {},
+    interactHold = 0,
+    frame = 0,
+}
+
+-- Create Inputs/Outputs
+function Create()
+    -- Image input
+    InImage = self:AddInput("Image", "Image", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1
+    })
+
+    InMeshMask = self:AddInput("Secondary Mesh Mask", "MeshMask", {
+        LINKID_DataType = "Image",
+        INPID_InputControl = "ImageControl",
+        INP_Required = false,
+    })
+
+    InWeightMask = self:AddInput("Secondary Weight Mask", "WeightMask", {
+        LINKID_DataType = "Image",
+        INPID_InputControl = "ImageControl",
+        INP_Required = false,
+    })
+
+    self:AddControlPage("Mesh")
+    self:BeginControlNest("Mesh Build", "MeshNest", true, {})
+
+    InRebuildMeshButton = self:AddInput("Rebuild Mesh", "RebuildMesh", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ButtonControl",
+        INP_DoNotifyChanged = true,
+    })
+
+    InUseMeshMask = self:AddInput("Use Mesh Mask Input", "UseMeshMask", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_DoNotifyChanged = true,
+    })
+
+    InMeshRebuild = self:AddInput("Rebuild Every Frame", "MeshRebuild", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 1,
+        INP_DoNotifyChanged = true,
+    })
+
+    InMaskAlphaThreshold = self:AddInput("Mask Alpha Threshold", "MaskAlphaThreshold", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.0,
+        INP_MaxScale = 1.0,
+        INP_Default = 0.03,
+        INP_DoNotifyChanged = true,
+    })
+
+    InMaskDownsample = self:AddInput("Mask Downsample", "MaskDownsample", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_Integer = true,
+        INP_MinScale = 1,
+        INP_MaxScale = 8,
+        INP_Default = 1,
+        INP_DoNotifyChanged = true,
+    })
+
+    InMeshInteriorDensity = self:AddInput("Interior Point Spacing", "MeshInteriorDensity", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 4,
+        INP_MaxScale = 128,
+        INP_Default = 32,
+        INP_DoNotifyChanged = true,
+    })
+
+    InMeshInteriorJitter = self:AddInput("Interior Point Jitter", "MeshInteriorJitter", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.0,
+        INP_MaxScale = 1.0,
+        INP_Default = 0.0,
+        INP_DoNotifyChanged = true,
+    })
+
+    InMeshContourDensity = self:AddInput("Contour Point Spacing", "MeshContourDensity", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 4,
+        INP_MaxScale = 128,
+        INP_Default = 32,
+        INP_DoNotifyChanged = true,
+    })
+
+    InMeshExpand = self:AddInput("Contour Point Expansion", "MeshExpand", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.0,
+        INP_MaxScale = 0.5,
+        INP_MinAllowed = 0.0,
+        INP_MaxAllowed = 1.0,
+        INP_Default = 0.02,
+        INP_DoNotifyChanged = true,
+    })
+
+    InMeshAlwaysDisplay = self:AddInput("Always Display Mesh", "MeshDebug", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+    })
+
+    InMeshThickness = self:AddInput("Mesh Thickness", "MeshThickness", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_Integer = true,
+        INP_MinScale = 1,
+        INP_MaxScale = 5,
+        INP_Default = 2,
+    })
+
+    InMeshColor = self:AddInput("Mesh Color", "MeshColor", {
+        ICS_Name = "Mesh Color",
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.95,
+        INP_DoNotifyChanged = true,
+        IC_ControlGroup = 77,
+        IC_ControlID = 0,
+    })
+
+    InMeshColorG = self:AddInput("Green", "MeshColorG", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.2,
+        INP_DoNotifyChanged = true,
+        IC_ControlGroup = 77,
+        IC_ControlID = 1,
+    })
+
+    InMeshColorB = self:AddInput("Blue", "MeshColorB", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ColorControl",
+        INP_Default = 0.2,
+        INP_DoNotifyChanged = true,
+        IC_ControlGroup = 77,
+        IC_ControlID = 2,
+    })
+
+    InMeshAutoColor = self:AddInput("Auto Color Instance Nodes", "MeshAutoColor", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+    })
+
+    self:EndControlNest()
+
+    -- Create tab order: Mesh, Pins, Deformers, Solver, Locators, Overlay
+    self:AddControlPage("Pins")
+    self:AddControlPage("Deformers")
+    self:AddControlPage("Solver")
+    self:AddControlPage("Locators")
+    self:AddControlPage("Overlay")
+    self:AddControlPage("Solver")
+
+    InFalloffMode = self:AddInput("Falloff Mode", "FalloffMode", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ComboControl",
+        INP_Integer = true,
+        INP_Default = 1,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 2,
+        { CCS_AddString = "Linear", },
+        { CCS_AddString = "Smoothstep", },
+        { CCS_AddString = "Gaussian", },
+    })
+
+    InInfluenceMode = self:AddInput("Influence Mode", "InfluenceMode", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ComboControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 2,
+        { CCS_AddString = "Sum", },
+        { CCS_AddString = "Max", },
+        { CCS_AddString = "Normalized Sum", },
+    })
+
+    InMaxDisplace = self:AddInput("Max Displacement", "MaxDisplacement", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.01,
+        INP_MaxScale = 0.50,
+        INP_MinAllowed = 0.001,
+        INP_MaxAllowed = 2.0,
+        INP_Default = 0.20,
+    })
+
+    self:AddControlPage("Overlay")
+
+    InQualityMode = self:AddInput("Quality", "QualityMode", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ComboControl",
+        INP_Integer = true,
+        INP_Default = 1,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 1,
+        { CCS_AddString = "Draft", },
+        { CCS_AddString = "High", },
+    })
+
+    InDebugOverlay = self:AddInput("Show Influence Overlay", "DebugOverlay", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_DoNotifyChanged = true,
+    })
+
+    InDebugAlpha = self:AddInput("Overlay Opacity", "DebugAlpha", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.01,
+        INP_MaxScale = 1.0,
+        INP_MinAllowed = 0.0,
+        INP_MaxAllowed = 1.0,
+        INP_Default = 0.35,
+        IC_Visible = false,
+    })
+
+    self:AddControlPage("Deformers")
+    self:BeginControlNest("Root Lock", "RootLockNest", true, {})
+
+    InRootLockEnable = self:AddInput("Enable Root Lock", "RootLockEnable", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_DoNotifyChanged = true,
+    })
+
+    InRootLockPos = self:AddInput("Root Position", "RootLockPos", {
+        LINKID_DataType = "Point",
+        INPID_InputControl = "OffsetControl",
+        INPID_PreviewControl = "CrosshairControl",
+        INP_DefaultX = 0.5,
+        INP_DefaultY = 0.5,
+        INP_DoNotifyChanged = true,
+        IC_Visible = false,
+    })
+    InRootLockPos:SetAttrs({ PC_Visible = false })
+
+    InRootLockRadius = self:AddInput("Root Radius", "RootLockRadius", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.01,
+        INP_MaxScale = 1.0,
+        INP_MinAllowed = 0.001,
+        INP_MaxAllowed = 2.0,
+        INP_Default = 0.15,
+        IC_Visible = false,
+    })
+
+    InRootLockStrength = self:AddInput("Root Strength", "RootLockStrength", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.0,
+        INP_MaxScale = 1.0,
+        INP_MinAllowed = 0.0,
+        INP_MaxAllowed = 1.0,
+        INP_Default = 1.0,
+        IC_Visible = false,
+    })
+
+    self:EndControlNest()
+
+    self:BeginControlNest("Follower Deformer", "FollowerNest", false, {})
+    self:AddInput("Coming Soon: Follower", "FollowerPlaceholder", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "LabelControl",
+    })
+    self:EndControlNest()
+
+    self:BeginControlNest("Wave Deformer", "WaveNest", false, {})
+    self:AddInput("Coming Soon: Wave", "WavePlaceholder", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "LabelControl",
+    })
+    self:EndControlNest()
+
+    self:BeginControlNest("IK/FK Deformer", "IKFKNest", false, {})
+    self:AddInput("Coming Soon: IK/FK", "IKFKPlaceholder", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "LabelControl",
+    })
+    self:EndControlNest()
+
+    self:AddControlPage("Pins")
+    self:BeginControlNest("Pin Global", "PinGlobalNest", true, {})
+    InRigMode = self:AddInput("Rig Mode", "RigMode", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ComboControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 1,
+        INP_DoNotifyChanged = true,
+        { CCS_AddString = "Setup", },
+        { CCS_AddString = "Animate", },
+    })
+    InUseWeightMask = self:AddInput("Use Weight Mask", "UseWeightMask", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+    })
+    InWeightMaskLock = self:AddInput("Weight Mask Lock", "WeightMaskLock", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.0,
+        INP_MaxScale = 1.0,
+        INP_Default = 1.0,
+    })
+    self:EndControlNest()
+
+    for i = 1, MAX_PINS do
+        self:BeginControlNest("Pin " .. i, "PinNest" .. i, i == 1, {})
+
+        PinEnabled[i] = self:AddInput("Enable", "Enable" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "CheckboxControl",
+            INP_Integer = true,
+            INP_Default = (i == 1) and 1 or 0,
+            INP_DoNotifyChanged = true,
+        })
+
+        PinPos[i] = self:AddInput("Position", "Pin" .. i, {
+            LINKID_DataType = "Point",
+            INPID_InputControl = "OffsetControl",
+            INPID_PreviewControl = "PointControl",
+            INP_DefaultX = 0.5,
+            INP_DefaultY = 0.5,
+            INP_DoNotifyChanged = true,
+            IC_Visible = (i == 1),
+        })
+        PinPos[i]:SetAttrs({ PC_Visible = (i == 1) })
+
+        PinStrength[i] = self:AddInput("Pull", "Strength" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "SliderControl",
+            INP_MinScale = -2.0,
+            INP_MaxScale = 2.0,
+            INP_MinAllowed = -4.0,
+            INP_MaxAllowed = 4.0,
+            INP_Default = 1.0,
+            IC_Visible = (i == 1),
+        })
+
+        PinRadius[i] = self:AddInput("Radius", "Radius" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "SliderControl",
+            INP_MinScale = 0.01,
+            INP_MaxScale = 1.0,
+            INP_MinAllowed = 0.001,
+            INP_MaxAllowed = 2.0,
+            INP_Default = 0.20,
+            IC_Visible = (i == 1),
+        })
+
+        PinRotation[i] = self:AddInput("Rotation", "Rotation" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "SliderControl",
+            INP_MinScale = -180.0,
+            INP_MaxScale = 180.0,
+            INP_MinAllowed = -720.0,
+            INP_MaxAllowed = 720.0,
+            INP_Default = 0.0,
+            IC_Visible = (i == 1),
+        })
+
+        PinExpansion[i] = self:AddInput("Expansion", "Expansion" .. i, {
+            LINKID_DataType = "Number",
+            INPID_InputControl = "SliderControl",
+            INP_MinScale = -1.0,
+            INP_MaxScale = 1.0,
+            INP_MinAllowed = -2.0,
+            INP_MaxAllowed = 2.0,
+            INP_Default = 0.0,
+            IC_Visible = (i == 1),
+        })
+
+        self:EndControlNest()
+    end
+
+    self:AddControlPage("Locators")
+    self:BeginControlNest("Locators", "LocatorsNest", true, {})
+    InLocatorEnable = self:AddInput("Enable Locators", "LocatorEnable", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+    })
+    InLocatorMode = self:AddInput("Locator Source", "LocatorMode", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ComboControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        { CCS_AddString = "Pin", },
+        { CCS_AddString = "Vertex", },
+    })
+    self:AddInput("Outputs coming in next phase", "LocatorPlaceholder", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "LabelControl",
+    })
+    self:EndControlNest()
+
+    -- Main image output
+    OutImage = self:AddOutput("Output", "Output", {
+        LINKID_DataType = "Image",
+        LINK_Main = 1
+    })
+end
+
+local function setPinUiVisible(i, enabled)
+    local show = enabled and true or false
+    PinPos[i]:SetAttrs({ IC_Visible = show, PC_Visible = show })
+    PinStrength[i]:SetAttrs({ IC_Visible = show })
+    PinRadius[i]:SetAttrs({ IC_Visible = show })
+    PinRotation[i]:SetAttrs({ IC_Visible = show })
+    PinExpansion[i]:SetAttrs({ IC_Visible = show })
+end
+
+local function setDebugUiVisible(enabled)
+    InDebugAlpha:SetAttrs({ IC_Visible = enabled and true or false })
+end
+
+local function setRootLockUiVisible(enabled)
+    local show = enabled and true or false
+    InRootLockPos:SetAttrs({ IC_Visible = show, PC_Visible = show })
+    InRootLockRadius:SetAttrs({ IC_Visible = show })
+    InRootLockStrength:SetAttrs({ IC_Visible = show })
+end
+
+function NotifyChanged(inp, param, time)
+    if param == nil then return end
+
+    if inp == InRebuildMeshButton then
+        MeshCache.key = nil
+        MeshPreviewCountdown = 120
+        return
+    end
+
+    if inp == InUseMeshMask or inp == InMeshRebuild or inp == InMaskAlphaThreshold or inp == InMaskDownsample or inp == InMeshInteriorDensity or inp == InMeshInteriorJitter or inp == InMeshContourDensity or inp == InMeshExpand then
+        MeshCache.key = nil
+        MeshPreviewCountdown = 120
+        return
+    end
+
+    if inp == InMeshColor then
+        MeshPreviewCountdown = 120
+        return
+    end
+
+    if inp == InMeshColorG or inp == InMeshColorB then
+        MeshPreviewCountdown = 120
+        return
+    end
+
+    for i = 1, MAX_PINS do
+        if inp == PinEnabled[i] then
+            local on = param.Value >= 0.5
+            setPinUiVisible(i, on)
+            if not on then
+                PinBindPose[i] = nil
+            end
+            return
+        end
+    end
+
+    if inp == InDebugOverlay then
+        setDebugUiVisible(param.Value >= 0.5)
+        return
+    end
+
+    if inp == InRootLockEnable then
+        setRootLockUiVisible(param.Value >= 0.5)
+        return
+    end
+
+end
+
+local function pinDebugColor(i)
+    -- Deterministic hue wheel so each pin gets a distinct color across many pins.
+    local h = ((i - 1) * 0.61803398875) % 1.0
+    local s = 0.78
+    local v = 1.0
+    local c = v * s
+    local hp = h * 6.0
+    local x = c * (1.0 - math.abs((hp % 2.0) - 1.0))
+    local r, g, b = 0.0, 0.0, 0.0
+
+    if hp < 1.0 then
+        r, g, b = c, x, 0.0
+    elseif hp < 2.0 then
+        r, g, b = x, c, 0.0
+    elseif hp < 3.0 then
+        r, g, b = 0.0, c, x
+    elseif hp < 4.0 then
+        r, g, b = 0.0, x, c
+    elseif hp < 5.0 then
+        r, g, b = x, 0.0, c
+    else
+        r, g, b = c, 0.0, x
+    end
+
+    local m = v - c
+    return r + m, g + m, b + m
+end
+
+local function clamp(v, lo, hi)
+    if v < lo then return lo end
+    if v > hi then return hi end
+    return v
+end
+
+local function maskValueAtPixel(p)
+    -- Handle regular RGBA images and single-channel mask images.
+    local a = p.A
+    if a == nil then a = p.W end
+    if a == nil then a = p.Y end
+    if a ~= nil then return tonumber(a) or 0.0 end
+
+    local r = tonumber(p.R) or tonumber(p.X) or 0.0
+    local g = tonumber(p.G) or r
+    local b = tonumber(p.B) or r
+    return math.max(r, g, b)
+end
+
+local function buildMaskRegion(maskImg, w, h, expandN, alphaThreshold, downsample)
+    local p = Pixel(maskImg)
+    local stride = math.max(1, math.floor(downsample or 1))
+    local minX, minY = w - 1, h - 1
+    local maxX, maxY = 0, 0
+    local found = false
+
+    for y = 0, h - 1, stride do
+        for x = 0, w - 1, stride do
+            maskImg:GetPixel(x, y, p)
+            if maskValueAtPixel(p) > (alphaThreshold or 0.01) then
+                found = true
+                if x < minX then minX = x end
+                if y < minY then minY = y end
+                if x > maxX then maxX = x end
+                if y > maxY then maxY = y end
+            end
+        end
+    end
+
+    -- Ensure right/bottom edges are considered even when stride > 1.
+    if not found and stride > 1 then
+        for y = 0, h - 1 do
+            maskImg:GetPixel(w - 1, y, p)
+            if maskValueAtPixel(p) > (alphaThreshold or 0.01) then
+                found = true
+                minX = math.min(minX, w - 1); maxX = math.max(maxX, w - 1)
+                minY = math.min(minY, y);     maxY = math.max(maxY, y)
+            end
+        end
+        for x = 0, w - 1 do
+            maskImg:GetPixel(x, h - 1, p)
+            if maskValueAtPixel(p) > (alphaThreshold or 0.01) then
+                found = true
+                minX = math.min(minX, x);     maxX = math.max(maxX, x)
+                minY = math.min(minY, h - 1); maxY = math.max(maxY, h - 1)
+            end
+        end
+    end
+
+    if not found then
+        return { x0 = 0, y0 = 0, x1 = w - 1, y1 = h - 1 }
+    end
+
+    local expandPx = math.floor(clamp(expandN, 0.0, 1.0) * math.min(w, h) + 0.5)
+    return {
+        x0 = clamp(minX - expandPx, 0, w - 1),
+        y0 = clamp(minY - expandPx, 0, h - 1),
+        x1 = clamp(maxX + expandPx, 0, w - 1),
+        y1 = clamp(maxY + expandPx, 0, h - 1),
+    }
+end
+
+local function buildMaskCache(maskImg, region, alphaThreshold)
+    local w = maskImg.Width
+    local h = maskImg.Height
+    local x0 = clamp(math.floor(region.x0), 0, w - 1)
+    local y0 = clamp(math.floor(region.y0), 0, h - 1)
+    local x1 = clamp(math.floor(region.x1), 0, w - 1)
+    local y1 = clamp(math.floor(region.y1), 0, h - 1)
+    local rw = math.max(1, x1 - x0 + 1)
+    local rh = math.max(1, y1 - y0 + 1)
+    local thr = alphaThreshold or 0.01
+    local p = Pixel(maskImg)
+    local data = {}
+    local idx = 1
+    for y = y0, y1 do
+        for x = x0, x1 do
+            maskImg:GetPixel(x, y, p)
+            data[idx] = (maskValueAtPixel(p) > thr) and 1 or 0
+            idx = idx + 1
+        end
+    end
+    return { x0 = x0, y0 = y0, x1 = x1, y1 = y1, w = rw, h = rh, data = data }
+end
+
+local function extractContourPoints(maskImg, region, alphaThreshold, contourSpacing, borderExpandPx)
+    local mp = Pixel(maskImg)
+    local thr = alphaThreshold or 0.01
+    local w = maskImg.Width
+    local h = maskImg.Height
+    local x0 = clamp(math.floor(region.x0), 0, w - 1)
+    local x1 = clamp(math.floor(region.x1), 0, w - 1)
+    local y0 = clamp(math.floor(region.y0), 0, h - 1)
+    local y1 = clamp(math.floor(region.y1), 0, h - 1)
+
+    local boundarySet = {}
+    local boundaryPts = {}
+
+    for y = y0, y1 do
+        for x = x0, x1 do
+            maskImg:GetPixel(x, y, mp)
+            if maskValueAtPixel(mp) > thr then
+                local edge = false
+                local nx = { x - 1, x + 1, x, x }
+                local ny = { y, y, y - 1, y + 1 }
+                for i = 1, 4 do
+                    local sx = clamp(nx[i], 0, w - 1)
+                    local sy = clamp(ny[i], 0, h - 1)
+                    maskImg:GetPixel(sx, sy, mp)
+                    if maskValueAtPixel(mp) <= thr then
+                        edge = true
+                        break
+                    end
+                end
+                if edge then
+                    local key = tostring(x) .. ":" .. tostring(y)
+                    boundarySet[key] = true
+                    boundaryPts[#boundaryPts + 1] = { ix = x, iy = y, x = x + 0.5, y = y + 0.5 }
+                end
+            end
+        end
+    end
+
+    if #boundaryPts < 8 then return nil end
+
+    local visited = {}
+    local bestComp = nil
+    local bestCompSize = 0
+
+    for i = 1, #boundaryPts do
+        local seed = boundaryPts[i]
+        local seedKey = tostring(seed.ix) .. ":" .. tostring(seed.iy)
+        if not visited[seedKey] then
+            local q = { seed }
+            local qHead = 1
+            visited[seedKey] = true
+            local comp = {}
+
+            while qHead <= #q do
+                local p = q[qHead]
+                qHead = qHead + 1
+                comp[#comp + 1] = p
+
+                for oy = -1, 1 do
+                    for ox = -1, 1 do
+                        if not (ox == 0 and oy == 0) then
+                            local nx = p.ix + ox
+                            local ny = p.iy + oy
+                            if nx >= x0 and nx <= x1 and ny >= y0 and ny <= y1 then
+                                local nk = tostring(nx) .. ":" .. tostring(ny)
+                                if boundarySet[nk] and not visited[nk] then
+                                    visited[nk] = true
+                                    q[#q + 1] = { ix = nx, iy = ny, x = nx + 0.5, y = ny + 0.5 }
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            if #comp > bestCompSize then
+                bestComp = comp
+                bestCompSize = #comp
+            end
+        end
+    end
+
+    local pts = bestComp or boundaryPts
+    if #pts < 8 then return nil end
+
+    local cx, cy = 0.0, 0.0
+    for i = 1, #pts do
+        cx = cx + pts[i].x
+        cy = cy + pts[i].y
+    end
+    cx = cx / #pts
+    cy = cy / #pts
+
+    local spacing = math.max(2.0, contourSpacing)
+    local approxPerim = math.max(1.0, 2.0 * ((x1 - x0) + (y1 - y0)))
+    local maxContourPoints = clamp(math.floor(approxPerim / spacing + 0.5), 16, 320)
+    local binCount = clamp(maxContourPoints * 5, 96, 2400)
+
+    local bins = {}
+    local twoPi = 2.0 * math.pi
+    for i = 1, #pts do
+        local dx = pts[i].x - cx
+        local dy = pts[i].y - cy
+        local ang
+        if math.abs(dx) < 1e-9 then
+            ang = (dy >= 0.0) and (0.5 * math.pi) or (1.5 * math.pi)
+        else
+            ang = math.atan(dy / dx)
+            if dx < 0.0 then
+                ang = ang + math.pi
+            elseif dy < 0.0 then
+                ang = ang + twoPi
+            end
+        end
+        if ang < 0.0 then ang = ang + twoPi end
+        if ang >= twoPi then ang = ang - twoPi end
+
+        local bi = math.floor((ang / twoPi) * binCount) + 1
+        if bi < 1 then bi = 1 end
+        if bi > binCount then bi = binCount end
+
+        local r2 = (dx * dx) + (dy * dy)
+        local cur = bins[bi]
+        if cur == nil or r2 > cur.r2 then
+            bins[bi] = { x = pts[i].x, y = pts[i].y, r2 = r2 }
+        end
+    end
+
+    local out = {}
+    for i = 1, binCount do
+        local b = bins[i]
+        if b ~= nil then
+            out[#out + 1] = { x = b.x, y = b.y }
+        end
+    end
+    if #out < 8 then return nil end
+
+    local function polyLength(poly)
+        local len = 0.0
+        for i = 1, #poly do
+            local j = (i % #poly) + 1
+            local dx = poly[j].x - poly[i].x
+            local dy = poly[j].y - poly[i].y
+            len = len + math.sqrt((dx * dx) + (dy * dy))
+        end
+        return len
+    end
+
+    local function resampleClosed(poly, count)
+        local n = #poly
+        if n < 3 or count < 3 then return poly end
+
+        local segLen = {}
+        local total = 0.0
+        for i = 1, n do
+            local j = (i % n) + 1
+            local dx = poly[j].x - poly[i].x
+            local dy = poly[j].y - poly[i].y
+            local d = math.sqrt((dx * dx) + (dy * dy))
+            segLen[i] = d
+            total = total + d
+        end
+        if total <= 1e-6 then return poly end
+
+        local step = total / count
+        local outPts = {}
+        local segIdx = 1
+        local segPos = 0.0
+
+        for si = 0, count - 1 do
+            local targetDist = si * step
+
+            while segIdx <= n and (segPos + segLen[segIdx]) < targetDist do
+                segPos = segPos + segLen[segIdx]
+                segIdx = segIdx + 1
+                if segIdx > n then segIdx = 1 end
+            end
+
+            local a = poly[segIdx]
+            local b = poly[(segIdx % n) + 1]
+            local d = segLen[segIdx]
+            local t = 0.0
+            if d > 1e-6 then
+                t = (targetDist - segPos) / d
+            end
+            t = clamp(t, 0.0, 1.0)
+
+            outPts[#outPts + 1] = {
+                x = a.x + ((b.x - a.x) * t),
+                y = a.y + ((b.y - a.y) * t),
+            }
+        end
+
+        return outPts
+    end
+
+    local initialLen = polyLength(out)
+    local desiredCount = clamp(math.floor(initialLen / spacing + 0.5), 12, maxContourPoints)
+    out = resampleClosed(out, desiredCount)
+
+    if #out > 8 then
+        local smoothPasses = 2
+        for _ = 1, smoothPasses do
+            local sm = {}
+            for i = 1, #out do
+                local p0 = out[((i - 2 + #out) % #out) + 1]
+                local p1 = out[i]
+                local p2 = out[(i % #out) + 1]
+                sm[i] = {
+                    x = (p0.x * 0.15) + (p1.x * 0.70) + (p2.x * 0.15),
+                    y = (p0.y * 0.15) + (p1.y * 0.70) + (p2.y * 0.15),
+                }
+            end
+            out = sm
+        end
+        out = resampleClosed(out, desiredCount)
+    end
+
+    if borderExpandPx and borderExpandPx > 0 and #out > 2 then
+        local cx2, cy2 = 0.0, 0.0
+        for i = 1, #out do
+            cx2 = cx2 + out[i].x
+            cy2 = cy2 + out[i].y
+        end
+        cx2 = cx2 / #out
+        cy2 = cy2 / #out
+        for i = 1, #out do
+            local dx = out[i].x - cx2
+            local dy = out[i].y - cy2
+            local d = math.sqrt(dx * dx + dy * dy)
+            if d > 1e-6 then
+                local nx = dx / d
+                local ny = dy / d
+                out[i].x = out[i].x + (nx * borderExpandPx)
+                out[i].y = out[i].y + (ny * borderExpandPx)
+            end
+        end
+    end
+
+    return out
+end
+
+local function buildGridMesh(region, interiorSpacing, contourSpacing, borderExpandPx, maskImg, alphaThreshold, interiorJitter)
+    local thr = alphaThreshold or 0.01
+    local mp = Pixel(maskImg)
+    local function isInsideMask(px, py)
+        local sx = clamp(math.floor(px + 0.5), 0, maskImg.Width - 1)
+        local sy = clamp(math.floor(py + 0.5), 0, maskImg.Height - 1)
+        maskImg:GetPixel(sx, sy, mp)
+        return maskValueAtPixel(mp) > thr
+    end
+
+    local contour = extractContourPoints(maskImg, region, thr, contourSpacing, borderExpandPx) or {}
+    local contourCount = #contour
+
+    local interior = {}
+    local seen = {}
+    local function addInterior(x, y)
+        local k = tostring(math.floor(x + 0.5)) .. ":" .. tostring(math.floor(y + 0.5))
+        if not seen[k] then
+            seen[k] = true
+            interior[#interior + 1] = { x = x, y = y }
+        end
+    end
+
+    local step = math.max(2.0, interiorSpacing)
+    local x0, y0, x1, y1 = region.x0, region.y0, region.x1, region.y1
+    local regionArea = math.max(1.0, (x1 - x0 + 1) * (y1 - y0 + 1))
+    local estInterior = math.floor(regionArea / math.max(4.0, step * step) + 0.5)
+    local interiorLimit = math.floor(clamp(estInterior * 1.5, 120, 1400))
+
+    for y = y0, y1, step do
+        for x = x0, x1, step do
+            local px, py = x, y
+            if interiorJitter > 0.0 then
+                local jx = (((x * 12.9898 + y * 78.233) % 1.0) - 0.5) * interiorJitter * step
+                local jy = (((y * 39.3467 + x * 11.135) % 1.0) - 0.5) * interiorJitter * step
+                px = clamp(px + jx, x0, x1)
+                py = clamp(py + jy, y0, y1)
+            end
+            local ix = clamp(math.floor(px + 0.5), 0, maskImg.Width - 1)
+            local iy = clamp(math.floor(py + 0.5), 0, maskImg.Height - 1)
+            maskImg:GetPixel(ix, iy, mp)
+            if maskValueAtPixel(mp) > thr then
+                addInterior(px, py)
+                if #interior >= interiorLimit then break end
+            end
+        end
+        if #interior >= interiorLimit then break end
+    end
+
+    if contourCount > 0 and #interior == 0 then
+        local cx, cy = 0.0, 0.0
+        for i = 1, contourCount do
+            cx = cx + contour[i].x
+            cy = cy + contour[i].y
+        end
+        addInterior(cx / contourCount, cy / contourCount)
+    end
+
+    local function delaunay(pts)
+        if #pts < 3 then return {} end
+        local all = {}
+        local minX, minY = 1e12, 1e12
+        local maxX, maxY = -1e12, -1e12
+        for i = 1, #pts do
+            all[i + 3] = pts[i]
+            if pts[i].x < minX then minX = pts[i].x end
+            if pts[i].y < minY then minY = pts[i].y end
+            if pts[i].x > maxX then maxX = pts[i].x end
+            if pts[i].y > maxY then maxY = pts[i].y end
+        end
+        local dx = maxX - minX
+        local dy = maxY - minY
+        local dmax = math.max(dx, dy)
+        local midx = (minX + maxX) * 0.5
+        local midy = (minY + maxY) * 0.5
+        all[1] = { x = midx - (20 * dmax), y = midy - dmax }
+        all[2] = { x = midx, y = midy + (20 * dmax) }
+        all[3] = { x = midx + (20 * dmax), y = midy - dmax }
+
+        local function circumContains(a, b, c, p)
+            local ax = a.x - p.x
+            local ay = a.y - p.y
+            local bx = b.x - p.x
+            local by = b.y - p.y
+            local cx = c.x - p.x
+            local cy = c.y - p.y
+            local det = ((ax * ax + ay * ay) * (bx * cy - by * cx))
+                      - ((bx * bx + by * by) * (ax * cy - ay * cx))
+                      + ((cx * cx + cy * cy) * (ax * by - ay * bx))
+            local orient = ((b.x - a.x) * (c.y - a.y)) - ((b.y - a.y) * (c.x - a.x))
+            if orient >= 0 then return det > 1e-9 end
+            return det < -1e-9
+        end
+
+        local triangles = { { 1, 2, 3 } }
+        for pi = 4, #all do
+            local bad = {}
+            local edges = {}
+            for ti = 1, #triangles do
+                local t = triangles[ti]
+                if circumContains(all[t[1]], all[t[2]], all[t[3]], all[pi]) then
+                    bad[ti] = true
+                    local e = { { t[1], t[2] }, { t[2], t[3] }, { t[3], t[1] } }
+                    for ei = 1, 3 do
+                        local a = math.min(e[ei][1], e[ei][2])
+                        local b = math.max(e[ei][1], e[ei][2])
+                        local k = tostring(a) .. ":" .. tostring(b)
+                        if edges[k] then edges[k] = false else edges[k] = { a, b } end
+                    end
+                end
+            end
+            local kept = {}
+            for ti = 1, #triangles do
+                if not bad[ti] then kept[#kept + 1] = triangles[ti] end
+            end
+            triangles = kept
+            for _, e in pairs(edges) do
+                if e then triangles[#triangles + 1] = { e[1], e[2], pi } end
+            end
+        end
+
+        local out = {}
+        for i = 1, #triangles do
+            local t = triangles[i]
+            if t[1] > 3 and t[2] > 3 and t[3] > 3 then
+                out[#out + 1] = { t[1] - 3, t[2] - 3, t[3] - 3 }
+            end
+        end
+        return out
+    end
+
+    -- If contour points are too far from interior, add bridge interior points near edges.
+    if contourCount >= 1 and #interior >= 1 then
+        local bridgeLimit = math.max(interiorSpacing * 1.25, 8.0)
+        for ci = 1, contourCount do
+            local c = contour[ci]
+            local bestK, bestD2 = nil, 1e18
+            for k = 1, #interior do
+                local iv = interior[k]
+                local dx = iv.x - c.x
+                local dy = iv.y - c.y
+                local d2 = (dx * dx) + (dy * dy)
+                if d2 < bestD2 then
+                    bestD2 = d2
+                    bestK = k
+                end
+            end
+
+            if bestK ~= nil then
+                local d = math.sqrt(bestD2)
+                if d > bridgeLimit then
+                    local segs = math.floor(d / bridgeLimit + 0.5)
+                    if segs < 2 then segs = 2 end
+                    if segs > 6 then segs = 6 end
+
+                    local iv = interior[bestK]
+                    for s = 1, segs - 1 do
+                        local t = s / segs
+                        local bx = c.x + ((iv.x - c.x) * t)
+                        local by = c.y + ((iv.y - c.y) * t)
+                        local ix = clamp(math.floor(bx + 0.5), 0, maskImg.Width - 1)
+                        local iy = clamp(math.floor(by + 0.5), 0, maskImg.Height - 1)
+                        maskImg:GetPixel(ix, iy, mp)
+                        if maskValueAtPixel(mp) > thr then
+                            addInterior(bx, by)
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Also bridge contour edge midpoints, not just contour vertices.
+        if contourCount >= 2 then
+            for ci = 1, contourCount do
+                local cj = (ci % contourCount) + 1
+                local mx = (contour[ci].x + contour[cj].x) * 0.5
+                local my = (contour[ci].y + contour[cj].y) * 0.5
+
+                local bestK, bestD2 = nil, 1e18
+                for k = 1, #interior do
+                    local iv = interior[k]
+                    local dx = iv.x - mx
+                    local dy = iv.y - my
+                    local d2 = (dx * dx) + (dy * dy)
+                    if d2 < bestD2 then
+                        bestD2 = d2
+                        bestK = k
+                    end
+                end
+
+                if bestK ~= nil then
+                    local d = math.sqrt(bestD2)
+                    if d > bridgeLimit then
+                        local segs = math.floor(d / bridgeLimit + 0.5)
+                        if segs < 2 then segs = 2 end
+                        if segs > 6 then segs = 6 end
+
+                        local iv = interior[bestK]
+                        for s = 1, segs - 1 do
+                            local t = s / segs
+                            local bx = mx + ((iv.x - mx) * t)
+                            local by = my + ((iv.y - my) * t)
+                            local ix = clamp(math.floor(bx + 0.5), 0, maskImg.Width - 1)
+                            local iy = clamp(math.floor(by + 0.5), 0, maskImg.Height - 1)
+                            maskImg:GetPixel(ix, iy, mp)
+                            if maskValueAtPixel(mp) > thr then
+                                addInterior(bx, by)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Guaranteed inner support layer: add interior points just inside contour.
+    if contourCount >= 8 then
+        local ccx, ccy = 0.0, 0.0
+        for i = 1, contourCount do
+            ccx = ccx + contour[i].x
+            ccy = ccy + contour[i].y
+        end
+        ccx = ccx / contourCount
+        ccy = ccy / contourCount
+
+        local ringStep = math.max(2.0, contourSpacing * 0.75)
+        local ringDepth = math.max(2.0, math.min(interiorSpacing * 0.9, contourSpacing * 0.8))
+        for i = 1, contourCount do
+            local j = (i % contourCount) + 1
+            local ex = contour[j].x - contour[i].x
+            local ey = contour[j].y - contour[i].y
+            local el = math.sqrt((ex * ex) + (ey * ey))
+            if el > 1e-6 then
+                local segments = math.max(1, math.floor(el / ringStep + 0.5))
+                for s = 0, segments - 1 do
+                    local t = (s + 0.5) / segments
+                    local px = contour[i].x + (ex * t)
+                    local py = contour[i].y + (ey * t)
+
+                    local nx = ccx - px
+                    local ny = ccy - py
+                    local nl = math.sqrt((nx * nx) + (ny * ny))
+                    if nl > 1e-6 then
+                        nx = nx / nl
+                        ny = ny / nl
+                        local bx = px + (nx * ringDepth)
+                        local by = py + (ny * ringDepth)
+                        local ix = clamp(math.floor(bx + 0.5), 0, maskImg.Width - 1)
+                        local iy = clamp(math.floor(by + 0.5), 0, maskImg.Height - 1)
+                        maskImg:GetPixel(ix, iy, mp)
+                        if maskValueAtPixel(mp) > thr then
+                            addInterior(bx, by)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local verts = {}
+    for i = 1, contourCount do verts[#verts + 1] = contour[i] end
+    for i = 1, #interior do verts[#verts + 1] = interior[i] end
+
+    local tris = {}
+    local interiorOffset = contourCount
+
+    -- Stabilized triangulation over all vertices with geometric and mask guards.
+    local allTris = delaunay(verts)
+    for i = 1, #allTris do
+        local t = allTris[i]
+        local a = verts[t[1]]
+        local b = verts[t[2]]
+        local c = verts[t[3]]
+        local aContour = (t[1] <= contourCount)
+        local bContour = (t[2] <= contourCount)
+        local cContour = (t[3] <= contourCount)
+        local contourVerts = (aContour and 1 or 0) + (bContour and 1 or 0) + (cContour and 1 or 0)
+
+        local abx, aby = b.x - a.x, b.y - a.y
+        local bcx, bcy = c.x - b.x, c.y - b.y
+        local cax, cay = a.x - c.x, a.y - c.y
+        local ab2 = (abx * abx) + (aby * aby)
+        local bc2 = (bcx * bcx) + (bcy * bcy)
+        local ca2 = (cax * cax) + (cay * cay)
+        local maxL2 = math.max(ab2, math.max(bc2, ca2))
+
+        -- Skip contour-only faces; keep edge strip linear and connect it to interior.
+        if contourVerts < 3 then
+            local maxEdge
+            if contourVerts == 0 then
+                maxEdge = math.max(interiorSpacing * 2.8, 18.0)
+            elseif contourVerts == 1 then
+                maxEdge = math.max(interiorSpacing * 5.0, contourSpacing * 4.5, borderExpandPx * 2.0 + 14.0, 24.0)
+            else
+                maxEdge = math.max(interiorSpacing * 4.0, contourSpacing * 3.2, borderExpandPx * 1.6 + 12.0, 20.0)
+            end
+            local maxEdge2 = maxEdge * maxEdge
+            if maxL2 <= maxEdge2 then
+            local cx = (a.x + b.x + c.x) / 3
+            local cy = (a.y + b.y + c.y) / 3
+            local abx = (a.x + b.x) * 0.5
+            local aby = (a.y + b.y) * 0.5
+            local bcx = (b.x + c.x) * 0.5
+            local bcy = (b.y + c.y) * 0.5
+            local cax = (c.x + a.x) * 0.5
+            local cay = (c.y + a.y) * 0.5
+
+            local insideVotes = 0
+            if isInsideMask(a.x, a.y) then insideVotes = insideVotes + 1 end
+            if isInsideMask(b.x, b.y) then insideVotes = insideVotes + 1 end
+            if isInsideMask(c.x, c.y) then insideVotes = insideVotes + 1 end
+            if isInsideMask(cx, cy) then insideVotes = insideVotes + 1 end
+            if isInsideMask(abx, aby) then insideVotes = insideVotes + 1 end
+            if isInsideMask(bcx, bcy) then insideVotes = insideVotes + 1 end
+            if isInsideMask(cax, cay) then insideVotes = insideVotes + 1 end
+
+            -- Boundary triangles can be thin; allow if any probe is inside.
+            if insideVotes >= 1 then
+                tris[#tris + 1] = { t[1], t[2], t[3] }
+            end
+            end
+        end
+    end
+
+    -- Explicitly stitch contour edges to nearest interior to ensure connectivity.
+    if contourCount >= 2 and #interior >= 1 then
+        local maxAttach = math.max(interiorSpacing * 3.2, contourSpacing * 2.0, borderExpandPx + 12.0, 18.0)
+        local maxAttach2 = maxAttach * maxAttach
+        local used = {}
+        for i = 1, contourCount do
+            local j = (i % contourCount) + 1
+            local mx = (verts[i].x + verts[j].x) * 0.5
+            local my = (verts[i].y + verts[j].y) * 0.5
+            local bestK, bestD2 = nil, 1e18
+            for k = 1, #interior do
+                local iv = verts[interiorOffset + k]
+                local dx = iv.x - mx
+                local dy = iv.y - my
+                local d2 = (dx * dx) + (dy * dy)
+                if d2 < bestD2 then
+                    bestD2 = d2
+                    bestK = k
+                end
+            end
+
+            if bestK and bestD2 <= maxAttach2 then
+                local a1 = math.min(i, j)
+                local b1 = math.max(i, j)
+                local c1 = interiorOffset + bestK
+                local key = tostring(a1) .. ":" .. tostring(b1) .. ":" .. tostring(c1)
+                if not used[key] then
+                    used[key] = true
+                    tris[#tris + 1] = { i, j, c1 }
+                end
+            end
+        end
+    end
+
+    return verts, tris
+end
+
+local function drawMeshPoint(out, px, py, w, h, thickness, pix)
+    for oy = -thickness + 1, thickness - 1 do
+        for ox = -thickness + 1, thickness - 1 do
+            local x = px + ox
+            local y = py + oy
+            if x >= 0 and x < w and y >= 0 and y < h then
+                out:SetPixel(x, y, pix)
+            end
+        end
+    end
+end
+
+local function drawMeshLine(out, x0, y0, x1, y1, w, h, thickness, pix)
+    local dx = x1 - x0
+    local dy = y1 - y0
+    local steps = math.max(math.abs(dx), math.abs(dy))
+    if steps < 1 then
+        drawMeshPoint(out, math.floor(x0 + 0.5), math.floor(y0 + 0.5), w, h, thickness, pix)
+        return
+    end
+
+    local sx = dx / steps
+    local sy = dy / steps
+    local x = x0
+    local y = y0
+    for _ = 0, steps do
+        drawMeshPoint(out, math.floor(x + 0.5), math.floor(y + 0.5), w, h, thickness, pix)
+        x = x + sx
+        y = y + sy
+    end
+end
+
+local function drawPinMarker(out, px, py, w, h, r, g, b)
+    local outer = Pixel(out)
+    outer.R = 1.0
+    outer.G = 1.0
+    outer.B = 1.0
+    outer.A = 1.0
+
+    local cross = Pixel(out)
+    cross.R = math.max(0.0, math.min(1.0, r or 1.0))
+    cross.G = math.max(0.0, math.min(1.0, g or 0.2))
+    cross.B = math.max(0.0, math.min(1.0, b or 0.2))
+    cross.A = 1.0
+
+    local x = math.floor(px + 0.5)
+    local y = math.floor(py + 0.5)
+
+    -- Opaque white backing prevents red mesh/overlay bleed near the handle.
+    drawMeshPoint(out, x, y, w, h, 10, outer)
+
+    -- Small crosshair to keep pins visible over dense red mesh lines.
+    drawMeshLine(out, x - 16, y, x + 16, y, w, h, 2, cross)
+    drawMeshLine(out, x, y - 16, x, y + 16, w, h, 2, cross)
+    drawMeshPoint(out, x, y, w, h, 2, cross)
+end
+
+local function inputNumber(inp, req, def)
+    local ok, v = pcall(function() return inp:GetValue(req) end)
+    if (not ok) or v == nil then return def end
+
+    if type(v) == "number" then return v end
+
+    local okVal, vv = pcall(function() return v.Value end)
+    if okVal and type(vv) == "number" then return vv end
+
+    local n = tonumber(v)
+    if n ~= nil then return n end
+    return def
+end
+
+local function inputPoint(inp, req, defX, defY)
+    local ok, p = pcall(function() return inp:GetValue(req) end)
+    if (not ok) or p == nil then return defX, defY end
+
+    local x, y
+
+    if type(p) == "table" then
+        x = p.X or p[1]
+        y = p.Y or p[2]
+    else
+        local okx, vx = pcall(function() return p.X end)
+        local oky, vy = pcall(function() return p.Y end)
+        if okx then x = vx end
+        if oky then y = vy end
+    end
+
+    x = tonumber(x) or defX
+    y = tonumber(y) or defY
+
+    return x, y
+end
+
+local function computeFalloff(mode, t)
+    -- t: 0 at pin center, 1 at radius edge
+    t = clamp(t, 0.0, 1.0)
+
+    if mode == 0 then
+        return 1.0 - t
+    elseif mode == 1 then
+        local s = 1.0 - t
+        return s * s * (3.0 - (2.0 * s))
+    else
+        local edge = math.exp(-4.5)
+        local g = (math.exp(-4.5 * t * t) - edge) / (1.0 - edge)
+        return clamp(g, 0.0, 1.0)
+    end
+end
+
+local function computePinDisplacementAt(x, y, pins, influenceMode, falloffMode, maxDisplacePx, rootLockEnabled, rootPx, rootPy, rootRadiusPx, rootLockStrength)
+    local totalX, totalY = 0.0, 0.0
+    local affected = false
+    local maxAbsForce = -1.0
+    local normWeight = 0.0
+
+    for _, pin in ipairs(pins) do
+        if x < pin.minx or x > pin.maxx or y < pin.miny or y > pin.maxy then
+            goto continue_pin
+        end
+
+        local dx = x - pin.px
+        local dy = y - pin.py
+        local dist2 = (dx * dx) + (dy * dy)
+        if dist2 < pin.r2 then
+            local dist = math.sqrt(dist2)
+            local t = dist / pin.radius
+            local falloff = computeFalloff(falloffMode, t)
+            if falloff > 1e-6 then
+                local ux, uy = 0.0, 0.0
+                if dist > 1e-6 then
+                    ux = dx / dist
+                    uy = dy / dist
+                end
+
+                -- Pull translates nearby vertices by pin movement delta from bind pose.
+                local mdx = pin.px - pin.bindX
+                local mdy = pin.py - pin.bindY
+                local fx = mdx * pin.pull * falloff
+                local fy = mdy * pin.pull * falloff
+
+                -- Expansion moves vertices radially around the pin.
+                local expForce = pin.expansion * pin.radius * falloff
+                fx = fx + (ux * expForce)
+                fy = fy + (uy * expForce)
+
+                -- Rotation moves vertices tangentially around the pin.
+                if math.abs(pin.rotationRad) > 1e-6 and dist > 1e-6 then
+                    local tx = -uy
+                    local ty = ux
+                    local rotForce = pin.rotationRad * pin.radius * 0.35 * falloff
+                    fx = fx + (tx * rotForce)
+                    fy = fy + (ty * rotForce)
+                end
+
+                local absForce = math.sqrt((fx * fx) + (fy * fy))
+                if absForce > 1e-9 then
+                    affected = true
+                    if influenceMode == 1 then
+                        if absForce > maxAbsForce then
+                            maxAbsForce = absForce
+                            totalX = fx
+                            totalY = fy
+                        end
+                    else
+                        totalX = totalX + fx
+                        totalY = totalY + fy
+                        if influenceMode == 2 then
+                            normWeight = normWeight + falloff
+                        end
+                    end
+                end
+            end
+        end
+        ::continue_pin::
+    end
+
+    if not affected then
+        return 0.0, 0.0, false
+    end
+
+    if influenceMode == 2 and normWeight > 1e-6 then
+        totalX = totalX / normWeight
+        totalY = totalY / normWeight
+    end
+
+    if rootLockEnabled then
+        local rdx = x - rootPx
+        local rdy = y - rootPy
+        local rdist = math.sqrt(rdx * rdx + rdy * rdy)
+        if rdist < rootRadiusPx then
+            local rt = rdist / rootRadiusPx
+            local rootFalloff = computeFalloff(1, rt)
+            local lockAmount = clamp(rootLockStrength * rootFalloff, 0.0, 1.0)
+            local keep = 1.0 - lockAmount
+            totalX = totalX * keep
+            totalY = totalY * keep
+        end
+    end
+
+    local dispMag = math.sqrt(totalX * totalX + totalY * totalY)
+    if dispMag > maxDisplacePx and dispMag > 1e-6 then
+        local s = maxDisplacePx / dispMag
+        totalX = totalX * s
+        totalY = totalY * s
+    end
+
+    return totalX, totalY, true
+end
+
+local function warpMeshTriangle(out, srcImg, a0, b0, c0, a1, b1, c1, w, h, qualityMode, sp, dp)
+    local den = ((b1.y - c1.y) * (a1.x - c1.x)) + ((c1.x - b1.x) * (a1.y - c1.y))
+    if math.abs(den) < 1e-8 then return end
+
+    local minX = math.max(0, math.floor(math.min(a1.x, math.min(b1.x, c1.x))))
+    local maxX = math.min(w - 1, math.floor(math.max(a1.x, math.max(b1.x, c1.x))))
+    local minY = math.max(0, math.floor(math.min(a1.y, math.min(b1.y, c1.y))))
+    local maxY = math.min(h - 1, math.floor(math.max(a1.y, math.max(b1.y, c1.y))))
+
+    if maxX < minX or maxY < minY then return end
+
+    local eps = -1e-4
+    for y = minY, maxY do
+        local py = y + 0.5
+        for x = minX, maxX do
+            local px = x + 0.5
+
+            local w1 = (((b1.y - c1.y) * (px - c1.x)) + ((c1.x - b1.x) * (py - c1.y))) / den
+            local w2 = (((c1.y - a1.y) * (px - c1.x)) + ((a1.x - c1.x) * (py - c1.y))) / den
+            local w3 = 1.0 - w1 - w2
+
+            if w1 >= eps and w2 >= eps and w3 >= eps then
+                local sx = (w1 * a0.x) + (w2 * b0.x) + (w3 * c0.x)
+                local sy = (w1 * a0.y) + (w2 * b0.y) + (w3 * c0.y)
+                sx = clamp(sx, 0, w - 1)
+                sy = clamp(sy, 0, h - 1)
+
+                if qualityMode == 0 then
+                    srcImg:GetPixel(math.floor(sx + 0.5), math.floor(sy + 0.5), sp)
+                else
+                    srcImg:SamplePixelB(sx, sy, sp)
+                end
+
+                dp.R = sp.R
+                dp.G = sp.G
+                dp.B = sp.B
+                dp.A = sp.A
+                out:SetPixel(x, y, dp)
+            end
+        end
+    end
+end
+
+-- Main Process Function
+function Process(req)
+    RuntimeCache.frame = RuntimeCache.frame + 1
+    if (RuntimeCache.frame % 30) == 0 then
+        -- Keep Lua heap from growing during long interactive drags.
+        collectgarbage("step", 64)
+    end
+
+    local img = InImage:GetValue(req)
+    if not img then return end
+
+    local w = tonumber(img.Width)
+    local h = tonumber(img.Height)
+    if not w or not h then
+        OutImage:Set(req, img)
+        return
+    end
+
+    local minDim = math.min(w, h)
+    local rigMode = math.floor(clamp(inputNumber(InRigMode, req, 0), 0, 1)) -- 0=Setup, 1=Animate
+    local canDeform = (rigMode == 1)
+    local useMeshMask = inputNumber(InUseMeshMask, req, 0) >= 0.5
+    local meshRebuild = math.floor(clamp(inputNumber(InMeshRebuild, req, 1), 0, 1))
+    -- Mesh rebuild every frame is expensive; disable it during animate by default.
+    if canDeform and meshRebuild == 1 then
+        meshRebuild = 0
+    end
+    local maskAlphaThreshold = clamp(inputNumber(InMaskAlphaThreshold, req, 0.03), 0.0, 1.0)
+    local maskDownsample = math.floor(clamp(inputNumber(InMaskDownsample, req, 1), 1, 8))
+    local interiorSpacing = clamp(inputNumber(InMeshInteriorDensity, req, 32), 4, 256)
+    local interiorJitter = clamp(inputNumber(InMeshInteriorJitter, req, 0.0), 0.0, 1.0)
+    local contourSpacing = clamp(inputNumber(InMeshContourDensity, req, 32), 4, 256)
+    local meshExpand = clamp(inputNumber(InMeshExpand, req, 0.02), 0.0, 1.0)
+    local borderExpandPx = meshExpand * (0.10 * minDim)
+    local meshAlwaysDisplay = inputNumber(InMeshAlwaysDisplay, req, 0) >= 0.5
+    local meshDebug = meshAlwaysDisplay or (MeshPreviewCountdown > 0)
+    local meshThickness = math.floor(clamp(inputNumber(InMeshThickness, req, 2), 1, 5))
+    local meshColorR = clamp(inputNumber(InMeshColor, req, 0.95), 0.0, 1.0)
+    local meshColorG = clamp(inputNumber(InMeshColorG, req, 0.2), 0.0, 1.0)
+    local meshColorB = clamp(inputNumber(InMeshColorB, req, 0.2), 0.0, 1.0)
+    local meshSrc = img
+    if useMeshMask then
+        local okMask, maskIn = pcall(function() return InMeshMask:GetValue(req) end)
+        if okMask and maskIn then meshSrc = maskIn end
+    end
+
+    local meshKey = string.format(
+        "%dx%d|%d|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%d|%.3f",
+        w, h,
+        useMeshMask and 1 or 0,
+        maskAlphaThreshold,
+        maskDownsample,
+        interiorSpacing,
+        contourSpacing,
+        meshExpand,
+        borderExpandPx,
+        meshRebuild,
+        meshRebuild == 1 and req.Time or 0
+    )
+    if MeshCache.key ~= meshKey then
+        local region = buildMaskRegion(meshSrc, w, h, meshExpand, maskAlphaThreshold, maskDownsample)
+        local verts, tris = buildGridMesh(region, interiorSpacing, contourSpacing, borderExpandPx, meshSrc, maskAlphaThreshold, interiorJitter)
+        local maskCache = buildMaskCache(meshSrc, region, maskAlphaThreshold)
+        MeshCache.key = meshKey
+        MeshCache.region = region
+        MeshCache.verts = verts
+        MeshCache.tris = tris
+        MeshCache.mask = maskCache
+    end
+    local meshRegion = MeshCache.region
+    local meshVerts = MeshCache.verts
+    local meshTris = MeshCache.tris
+    local meshMaskCache = MeshCache.mask
+
+    local falloffMode = math.floor(clamp(inputNumber(InFalloffMode, req, 1), 0, 2))
+    local influenceMode = math.floor(clamp(inputNumber(InInfluenceMode, req, 0), 0, 2))
+    local maxDisplaceN = clamp(inputNumber(InMaxDisplace, req, 0.20), 0.001, 2.0)
+    local maxDisplacePx = maxDisplaceN * minDim
+    local qualityMode = math.floor(clamp(inputNumber(InQualityMode, req, 1), 0, 1))
+    local debugOverlay = inputNumber(InDebugOverlay, req, 0) >= 0.5
+    local debugAlpha = clamp(inputNumber(InDebugAlpha, req, 0.35), 0.0, 1.0)
+    local rootLockEnabled = inputNumber(InRootLockEnable, req, 0) >= 0.5
+    local rootLockStrength = clamp(inputNumber(InRootLockStrength, req, 1.0), 0.0, 1.0)
+    local useWeightMask = inputNumber(InUseWeightMask, req, 0) >= 0.5
+    local weightMaskLock = clamp(inputNumber(InWeightMaskLock, req, 1.0), 0.0, 1.0)
+    local weightMaskImg = nil
+    local weightMaskPixel = nil
+    if useWeightMask and weightMaskLock > 1e-6 then
+        local okW, wm = pcall(function() return InWeightMask:GetValue(req) end)
+        if okW and wm then
+            weightMaskImg = wm
+            weightMaskPixel = Pixel(weightMaskImg)
+        else
+            useWeightMask = false
+        end
+    else
+        useWeightMask = false
+    end
+
+    local rootPx, rootPy, rootRadiusPx = 0.0, 0.0, 1.0
+    if rootLockEnabled and rootLockStrength > 1e-6 then
+        local rxNorm, ryNorm = inputPoint(InRootLockPos, req, 0.5, 0.5)
+        local rootRadiusN = clamp(inputNumber(InRootLockRadius, req, 0.15), 0.001, 2.0)
+        rootPx = rxNorm * w
+        rootPy = ryNorm * h
+        rootRadiusPx = math.max(1.0, rootRadiusN * minDim)
+    else
+        rootLockEnabled = false
+    end
+
+    local pins = RuntimeCache.pins
+    local activePins = RuntimeCache.activePins
+    local prevPinX = RuntimeCache.prevPinX
+    local prevPinY = RuntimeCache.prevPinY
+    local pinCount = 0
+    local activePinCount = 0
+    local interacting = false
+    local ax0, ay0 = w - 1, h - 1
+    local ax1, ay1 = 0, 0
+
+    for i = 1, MAX_PINS do
+        local enabled = inputNumber(PinEnabled[i], req, (i == 1) and 1 or 0)
+        if enabled >= 0.5 then
+            local xNorm, yNorm = inputPoint(PinPos[i], req, 0.5, 0.5)
+            local pull = inputNumber(PinStrength[i], req, 1.0)
+            local radiusN = clamp(inputNumber(PinRadius[i], req, 0.20), 0.001, 2.0)
+            local radiusPx = math.max(1.0, radiusN * minDim)
+            local rotationDeg = inputNumber(PinRotation[i], req, 0.0)
+            local expansion = inputNumber(PinExpansion[i], req, 0.0)
+            local px = xNorm * w
+            local py = yNorm * h
+
+            local ppx = prevPinX[i]
+            local ppy = prevPinY[i]
+            if ppx ~= nil and ppy ~= nil then
+                local md = math.abs(px - ppx) + math.abs(py - ppy)
+                if md > 0.30 then
+                    interacting = true
+                end
+            end
+            prevPinX[i] = px
+            prevPinY[i] = py
+
+            if PinBindPose[i] == nil or rigMode == 0 then
+                PinBindPose[i] = { x = px, y = py }
+            end
+
+            if radiusPx > 1.0 then
+                local r = radiusPx
+                pinCount = pinCount + 1
+                local p = pins[pinCount]
+                if p == nil then
+                    p = {}
+                    pins[pinCount] = p
+                end
+                p.idx = i
+                p.px = px
+                p.py = py
+                p.bindX = PinBindPose[i].x
+                p.bindY = PinBindPose[i].y
+                p.pull = pull
+                p.rotationRad = (rotationDeg * math.pi) / 180.0
+                p.expansion = expansion
+                p.radius = r
+                p.r2 = r * r
+                p.minx = px - r
+                p.maxx = px + r
+                p.miny = py - r
+                p.maxy = py + r
+                local mdx = p.px - p.bindX
+                local mdy = p.py - p.bindY
+                local activeMag = math.abs(mdx * p.pull) + math.abs(mdy * p.pull) + math.abs(p.rotationRad * p.radius) + math.abs(p.expansion * p.radius)
+                if activeMag > 1e-4 then
+                    activePinCount = activePinCount + 1
+                    activePins[activePinCount] = p
+                    local pad = math.max(2.0, maxDisplacePx * 0.25)
+                    local px0 = math.floor(math.min(p.bindX, p.px) - p.radius - pad)
+                    local py0 = math.floor(math.min(p.bindY, p.py) - p.radius - pad)
+                    local px1 = math.floor(math.max(p.bindX, p.px) + p.radius + pad)
+                    local py1 = math.floor(math.max(p.bindY, p.py) + p.radius + pad)
+                    if px0 < ax0 then ax0 = px0 end
+                    if py0 < ay0 then ay0 = py0 end
+                    if px1 > ax1 then ax1 = px1 end
+                    if py1 > ay1 then ay1 = py1 end
+                end
+            end
+        else
+            prevPinX[i] = nil
+            prevPinY[i] = nil
+        end
+    end
+
+    for i = pinCount + 1, #pins do pins[i] = nil end
+    for i = activePinCount + 1, #activePins do activePins[i] = nil end
+
+    if pinCount == 0 and not meshDebug then
+        OutImage:Set(req, img)
+        return
+    end
+
+    if canDeform and activePinCount == 0 and not meshDebug and not debugOverlay then
+        OutImage:Set(req, img)
+        return
+    end
+
+    if activePinCount > 0 then
+        ax0 = clamp(ax0, 0, w - 1)
+        ay0 = clamp(ay0, 0, h - 1)
+        ax1 = clamp(ax1, 0, w - 1)
+        ay1 = clamp(ay1, 0, h - 1)
+    end
+
+    if interacting then
+        RuntimeCache.interactHold = 6
+    elseif RuntimeCache.interactHold > 0 then
+        RuntimeCache.interactHold = RuntimeCache.interactHold - 1
+    end
+    local liveInteracting = (RuntimeCache.interactHold > 0)
+
+    local liveQualityMode = qualityMode
+    local liveDebugOverlay = debugOverlay
+    if canDeform and liveInteracting then
+        -- Interactive drag preview: keep radius unlimited, reduce per-frame cost.
+        liveQualityMode = 0
+    end
+
+    local out = img:CopyOf()
+    local deformedVerts = meshVerts
+
+    if meshVerts and meshTris and #meshVerts >= 3 and #meshTris >= 1 and activePinCount > 0 and canDeform then
+        -- Clear original masked subject area first so displaced mesh doesn't leave a ghost behind.
+        deformedVerts = DeformCache.verts
+        for i = 1, #meshVerts do
+            local vx = meshVerts[i].x
+            local vy = meshVerts[i].y
+            if vx < ax0 or vx > ax1 or vy < ay0 or vy > ay1 then
+                local dv = deformedVerts[i] or {}
+                dv.x = vx
+                dv.y = vy
+                deformedVerts[i] = dv
+                goto continue_vert
+            end
+            local dx, dy, moved = computePinDisplacementAt(
+                vx, vy, activePins, influenceMode, falloffMode, maxDisplacePx,
+                rootLockEnabled, rootPx, rootPy, rootRadiusPx, rootLockStrength
+            )
+            if moved and useWeightMask and weightMaskImg and weightMaskPixel then
+                local wx = clamp(math.floor(vx + 0.5), 0, weightMaskImg.Width - 1)
+                local wy = clamp(math.floor(vy + 0.5), 0, weightMaskImg.Height - 1)
+                weightMaskImg:GetPixel(wx, wy, weightMaskPixel)
+                local lockV = clamp(maskValueAtPixel(weightMaskPixel), 0.0, 1.0) * weightMaskLock
+                local keep = 1.0 - lockV
+                dx = dx * keep
+                dy = dy * keep
+            end
+            if moved then
+                local dv = deformedVerts[i] or {}
+                dv.x = clamp(vx + dx, 0, w - 1)
+                dv.y = clamp(vy + dy, 0, h - 1)
+                deformedVerts[i] = dv
+            else
+                local dv = deformedVerts[i] or {}
+                dv.x = vx
+                dv.y = vy
+                deformedVerts[i] = dv
+            end
+            ::continue_vert::
+        end
+
+        local cp = Pixel(out)
+        local mx0 = clamp(math.max(math.floor(meshRegion.x0), ax0), 0, w - 1)
+        local my0 = clamp(math.max(math.floor(meshRegion.y0), ay0), 0, h - 1)
+        local mx1 = clamp(math.min(math.floor(meshRegion.x1), ax1), 0, w - 1)
+        local my1 = clamp(math.min(math.floor(meshRegion.y1), ay1), 0, h - 1)
+        for y = my0, my1 do
+            for x = mx0, mx1 do
+                local inMask = false
+                if meshMaskCache ~= nil then
+                    local lx = x - meshMaskCache.x0
+                    local ly = y - meshMaskCache.y0
+                    if lx >= 0 and ly >= 0 and lx < meshMaskCache.w and ly < meshMaskCache.h then
+                        local mi = (ly * meshMaskCache.w) + lx + 1
+                        inMask = (meshMaskCache.data[mi] == 1)
+                    end
+                end
+                if inMask then
+                    cp.R = 0.0
+                    cp.G = 0.0
+                    cp.B = 0.0
+                    cp.A = 0.0
+                    out:SetPixel(x, y, cp)
+                end
+            end
+        end
+
+        local sp = Pixel(img)
+        local dp = Pixel(out)
+        for ti = 1, #meshTris do
+            local t = meshTris[ti]
+            local a0 = meshVerts[t[1]]
+            local b0 = meshVerts[t[2]]
+            local c0 = meshVerts[t[3]]
+            local a1 = deformedVerts[t[1]]
+            local b1 = deformedVerts[t[2]]
+            local c1 = deformedVerts[t[3]]
+            local tx0 = math.min(a1.x, math.min(b1.x, c1.x))
+            local ty0 = math.min(a1.y, math.min(b1.y, c1.y))
+            local tx1 = math.max(a1.x, math.max(b1.x, c1.x))
+            local ty1 = math.max(a1.y, math.max(b1.y, c1.y))
+            if tx1 < ax0 or tx0 > ax1 or ty1 < ay0 or ty0 > ay1 then
+                goto continue_tri
+            end
+            warpMeshTriangle(out, img, a0, b0, c0, a1, b1, c1, w, h, liveQualityMode, sp, dp)
+            ::continue_tri::
+        end
+
+        -- Fill small transparent holes produced by triangle raster gaps.
+        local bx0 = math.max(0, ax0 - 2)
+        local by0 = math.max(0, ay0 - 2)
+        local bx1 = math.min(w - 1, ax1 + 2)
+        local by1 = math.min(h - 1, ay1 + 2)
+
+        local p0 = Pixel(out)
+        local pn = Pixel(out)
+        local pf = Pixel(out)
+        local holeFillPasses = 0
+        if canDeform and liveInteracting then
+            holeFillPasses = 0
+        elseif qualityMode == 1 then
+            if #meshTris > 1800 then
+                holeFillPasses = 1
+            else
+                holeFillPasses = 2
+            end
+        end
+
+        for _ = 1, holeFillPasses do
+            for y = by0, by1 do
+                for x = bx0, bx1 do
+                    out:GetPixel(x, y, p0)
+                    if (tonumber(p0.A) or 0.0) <= 1e-6 then
+                        local sr, sg, sb, sa, c = 0.0, 0.0, 0.0, 0.0, 0
+                        for oy = -1, 1 do
+                            for ox = -1, 1 do
+                                if not (ox == 0 and oy == 0) then
+                                    local nx = x + ox
+                                    local ny = y + oy
+                                    if nx >= bx0 and nx <= bx1 and ny >= by0 and ny <= by1 then
+                                        out:GetPixel(nx, ny, pn)
+                                        local na = tonumber(pn.A) or 0.0
+                                        if na > 1e-6 then
+                                            sr = sr + (tonumber(pn.R) or 0.0)
+                                            sg = sg + (tonumber(pn.G) or 0.0)
+                                            sb = sb + (tonumber(pn.B) or 0.0)
+                                            sa = sa + na
+                                            c = c + 1
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        local minNeighbors = (liveQualityMode == 0) and 4 or 3
+                        if c >= minNeighbors then
+                            pf.R = sr / c
+                            pf.G = sg / c
+                            pf.B = sb / c
+                            pf.A = sa / c
+                            out:SetPixel(x, y, pf)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if liveDebugOverlay and #pins > 0 then
+        local ov = Pixel(out)
+        local ip = Pixel(out)
+        local overlayScale = clamp(debugAlpha, 0.0, 1.0)
+        local x0, y0 = w - 1, h - 1
+        local x1, y1 = 0, 0
+
+        for i = 1, #pins do
+            local p = pins[i]
+            x0 = math.min(x0, math.floor(clamp(p.px - p.radius - 1, 0, w - 1)))
+            x1 = math.max(x1, math.floor(clamp(p.px + p.radius + 1, 0, w - 1)))
+            y0 = math.min(y0, math.floor(clamp(p.py - p.radius - 1, 0, h - 1)))
+            y1 = math.max(y1, math.floor(clamp(p.py + p.radius + 1, 0, h - 1)))
+        end
+
+        for y = y0, y1 do
+            for x = x0, x1 do
+                local sumR, sumG, sumB, sumW = 0.0, 0.0, 0.0, 0.0
+                for i = 1, #pins do
+                    local p = pins[i]
+                    local dx = x - p.px
+                    local dy = y - p.py
+                    local d2 = (dx * dx) + (dy * dy)
+                    if d2 < p.r2 then
+                        local t = math.sqrt(d2) / p.radius
+                        local wv = computeFalloff(falloffMode, t)
+                        if wv > 1e-6 then
+                            local cr, cg, cb = pinDebugColor(p.idx)
+                            sumR = sumR + (cr * wv)
+                            sumG = sumG + (cg * wv)
+                            sumB = sumB + (cb * wv)
+                            sumW = sumW + wv
+                        end
+                    end
+                end
+
+                if sumW > 1e-6 then
+                    local a = clamp(overlayScale * clamp(sumW, 0.0, 1.0), 0.0, 1.0)
+                    if a > 1e-6 then
+                        out:GetPixel(x, y, ip)
+                        local rr = sumR / sumW
+                        local gg = sumG / sumW
+                        local bb = sumB / sumW
+                        ov.R = (tonumber(ip.R) or 0.0) * (1.0 - a) + (rr * a)
+                        ov.G = (tonumber(ip.G) or 0.0) * (1.0 - a) + (gg * a)
+                        ov.B = (tonumber(ip.B) or 0.0) * (1.0 - a) + (bb * a)
+                        ov.A = tonumber(ip.A) or 1.0
+                        out:SetPixel(x, y, ov)
+                    end
+                end
+            end
+        end
+
+    end
+
+    -- Tie pin marker visibility to the same toggle as influence overlay.
+    if liveDebugOverlay and #pins > 0 then
+        for i = 1, #pins do
+            local r, g, b = pinDebugColor(pins[i].idx)
+            drawPinMarker(out, pins[i].px, pins[i].py, w, h, r, g, b)
+        end
+    end
+
+    if meshDebug and deformedVerts then
+        local mp = Pixel(out)
+        mp.R = meshColorR
+        mp.G = meshColorG
+        mp.B = meshColorB
+        mp.A = 1.0
+        if meshTris then
+            for i = 1, #meshTris do
+                local t = meshTris[i]
+                local a = deformedVerts[t[1]]
+                local b = deformedVerts[t[2]]
+                local c = deformedVerts[t[3]]
+                drawMeshLine(out, a.x, a.y, b.x, b.y, w, h, meshThickness, mp)
+                drawMeshLine(out, b.x, b.y, c.x, c.y, w, h, meshThickness, mp)
+                drawMeshLine(out, c.x, c.y, a.x, a.y, w, h, meshThickness, mp)
+            end
+        end
+
+        local maxDebugPts = (qualityMode == 0) and 300 or 800
+        local step = math.max(1, math.floor(#deformedVerts / maxDebugPts))
+        for i = 1, #deformedVerts, step do
+            local vx = math.floor(deformedVerts[i].x + 0.5)
+            local vy = math.floor(deformedVerts[i].y + 0.5)
+            drawMeshPoint(out, vx, vy, w, h, meshThickness, mp)
+        end
+    end
+
+    if MeshPreviewCountdown > 0 then
+        MeshPreviewCountdown = MeshPreviewCountdown - 1
+    end
+
+    OutImage:Set(req, out)
+end
