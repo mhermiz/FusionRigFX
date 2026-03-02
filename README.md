@@ -1,4 +1,4 @@
-# FusionPuppetPin
+# FusionRigFX
 
 Custom DaVinci Resolve/Fusion Fuse for mesh-based 2D deformation using interactive puppet pins.
 
