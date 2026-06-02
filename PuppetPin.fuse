@@ -3,6 +3,7 @@ FuRegisterClass("PuppetPin", CT_Tool, {
     REGS_Name = "Puppet Pin",
     REGS_Category = "Custom",
     REGS_OpIconString = "PP1",
+    REG_TimeVariant = true,
 })
 
 -- Hard cap used for UI generation and runtime loops.
@@ -2047,13 +2048,35 @@ local function inputPoint(inp, req, defX, defY)
 end
 
 local function resolveWaveTime(req)
-    local rt = tonumber(req and req.Time)
-    if rt ~= nil then return rt end
-    local ok, ct = pcall(function() return comp.CurrentTime end)
-    if ok then
-        ct = tonumber(ct)
-        if ct ~= nil then return ct end
+    local reqTime = tonumber(req and req.Time)
+    local compTime = nil
+
+    local c = nil
+    pcall(function() c = self.Comp end)
+    if c == nil then
+        pcall(function() c = self:GetComp() end)
     end
+    if c ~= nil then
+        local okCompTime, ct = pcall(function() return c.CurrentTime end)
+        if okCompTime then
+            compTime = tonumber(ct)
+        end
+    end
+
+    if reqTime ~= nil then
+        local isQuick = false
+        local okQuick, quickValue = pcall(function() return req:IsQuick() end)
+        if okQuick then
+            isQuick = quickValue and true or false
+        end
+
+        if isQuick and compTime ~= nil and math.abs(compTime - reqTime) > 1e-6 then
+            return compTime
+        end
+        return reqTime
+    end
+
+    if compTime ~= nil then return compTime end
     return 0
 end
 
