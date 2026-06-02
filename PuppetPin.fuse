@@ -22,6 +22,8 @@ InMaxDisplace = nil
 InQualityMode = nil
 InDebugOverlay = nil
 InDebugAlpha = nil
+InDebugRenderToOutput = nil
+InLogFpsMetrics = nil
 InMeshDiagnosticMode = nil
 InMeshDiagnosticThreshold = nil
 InMeshDebugOutputMode = nil
@@ -105,6 +107,12 @@ RuntimeCache = {
     interactHold = 0,
     wasInteracting = false,
     frame = 0,
+    fpsMetrics = {
+        enabled = false,
+        prevTime = nil,
+        frameCount = 0,
+        lastFrameTime = nil,
+    },
 }
 
 -- Create all inspector controls and IO ports for the Fuse.
@@ -341,6 +349,21 @@ function Create()
         INP_MaxAllowed = 1.0,
         INP_Default = 0.35,
         IC_Visible = false,
+    })
+
+    InDebugRenderToOutput = self:AddInput("Render Overlay/Mesh to Output", "DebugRenderToOutput", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 1,
+    })
+
+    InLogFpsMetrics = self:AddInput("Log FPS Metrics", "LogFpsMetrics", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "CheckboxControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_DoNotifyChanged = true,
     })
 
     InMeshDiagnosticMode = self:AddInput("Mesh Diagnostics", "MeshDiagnosticMode", {
@@ -929,6 +952,14 @@ function NotifyChanged(inp, param, time)
 
     if inp == InDebugOverlay then
         setDebugUiVisible(param.Value >= 0.5)
+        return
+    end
+
+    if inp == InLogFpsMetrics then
+        RuntimeCache.fpsMetrics.enabled = false
+        RuntimeCache.fpsMetrics.prevTime = nil
+        RuntimeCache.fpsMetrics.frameCount = 0
+        RuntimeCache.fpsMetrics.lastFrameTime = nil
         return
     end
 
@@ -1873,6 +1904,125 @@ local function inputNumber(inp, req, def)
     return def
 end
 
+local function toolAttr(tool, name)
+    local ok, attrs = pcall(function() return tool:GetAttrs() end)
+    if ok and attrs then
+        return attrs[name]
+    end
+    return nil
+end
+
+local function toolName(tool)
+    local name = toolAttr(tool, "TOOLS_Name") or toolAttr(tool, "TOOLST_Name")
+    if name ~= nil then
+        return tostring(name)
+    end
+
+    local okName, directName = pcall(function() return tool.Name end)
+    if okName and directName ~= nil then
+        return tostring(directName)
+    end
+
+    return nil
+end
+
+local function isCurrentToolSelected()
+    local selectedAttr = toolAttr(self, "TOOLB_Selected")
+    if selectedAttr == true or selectedAttr == 1 then
+        return true
+    end
+
+    local comp = nil
+    pcall(function() comp = self.Comp end)
+    if comp == nil then
+        pcall(function() comp = self:GetComp() end)
+    end
+
+    if comp ~= nil then
+        local okActive, activeTool = pcall(function() return comp.ActiveTool end)
+        if okActive and activeTool ~= nil then
+            if activeTool == self then
+                return true
+            end
+            local selfName = toolName(self)
+            local activeName = toolName(activeTool)
+            if selfName ~= nil and activeName ~= nil and selfName == activeName then
+                return true
+            end
+        end
+
+        local okSelected, selectedTools = pcall(function() return comp:GetToolList(true) end)
+        if okSelected and selectedTools ~= nil then
+            local selfName = toolName(self)
+            for _, tool in pairs(selectedTools) do
+                if tool == self then
+                    return true
+                end
+                local selectedName = toolName(tool)
+                if selfName ~= nil and selectedName ~= nil and selfName == selectedName then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+local function shouldDrawDebugVisuals(req)
+    if inputNumber(InDebugRenderToOutput, req, 1) >= 0.5 then
+        return true
+    end
+    return isCurrentToolSelected()
+end
+
+local function resetFpsMetrics(metrics)
+    metrics.enabled = false
+    metrics.prevTime = nil
+    metrics.frameCount = 0
+    metrics.lastFrameTime = nil
+end
+
+local function logFpsMetrics(enabled, req, w, h)
+    local metrics = RuntimeCache.fpsMetrics
+
+    if not enabled then
+        if metrics.enabled then
+            print("[PuppetPin] FPS metrics disabled")
+        end
+        resetFpsMetrics(metrics)
+        return
+    end
+
+    local okClock, now = pcall(function() return os.clock() end)
+    if (not okClock) or type(now) ~= "number" then
+        return
+    end
+
+    if not metrics.enabled then
+        metrics.enabled = true
+        metrics.prevTime = now
+        metrics.frameCount = 0
+        metrics.lastFrameTime = nil
+    end
+
+    local delta = now - (metrics.prevTime or now)
+    metrics.prevTime = now
+    metrics.frameCount = metrics.frameCount + 1
+
+    local frameTime = req and req.Time or "?"
+    local repeatedFrame = metrics.lastFrameTime ~= nil and tostring(metrics.lastFrameTime) == tostring(frameTime)
+    metrics.lastFrameTime = frameTime
+
+    if delta > 0 then
+        local fps = 1.0 / delta
+        local frameMs = delta * 1000.0
+        print(string.format("[PuppetPin] Sample %d | Frame %s%s | FPS: %.1f | Frame Time: %.2f ms | Size: %dx%d", metrics.frameCount, tostring(frameTime), repeatedFrame and " repeated" or "", fps, frameMs, w or 0, h or 0))
+    else
+        print(string.format("[PuppetPin] Sample %d | Frame %s%s | FPS: -- | Frame Time: -- ms | Size: %dx%d", metrics.frameCount, tostring(frameTime), repeatedFrame and " repeated" or "", w or 0, h or 0))
+    end
+end
+
 -- Safe point getter for PointControl-style inputs.
 local function inputPoint(inp, req, defX, defY)
     local ok, p = pcall(function() return inp:GetValue(req) end)
@@ -2142,6 +2292,7 @@ function Process(req)
         OutImage:Set(req, img)
         return
     end
+    local logFpsEnabled = inputNumber(InLogFpsMetrics, req, 0) >= 0.5
 
     -- Read all mesh controls for this request/frame.
     local minDim = math.min(w, h)
@@ -2162,7 +2313,8 @@ function Process(req)
     local meshExpand = clamp(inputNumber(InMeshExpand, req, 0.02), 0.0, 1.0)
     local borderExpandPx = meshExpand * (0.10 * minDim)
     local meshAlwaysDisplay = inputNumber(InMeshAlwaysDisplay, req, 0) >= 0.5
-    local meshDebug = meshAlwaysDisplay or (MeshPreviewCountdown > 0)
+    local drawDebugVisuals = shouldDrawDebugVisuals(req)
+    local meshDebug = (meshAlwaysDisplay or (MeshPreviewCountdown > 0)) and drawDebugVisuals
     local meshThickness = math.floor(clamp(inputNumber(InMeshThickness, req, 2), 1, 5))
     local meshColorR = clamp(inputNumber(InMeshColor, req, 0.95), 0.0, 1.0)
     local meshColorG = clamp(inputNumber(InMeshColorG, req, 0.2), 0.0, 1.0)
@@ -2212,7 +2364,7 @@ function Process(req)
     local maxDisplaceN = clamp(inputNumber(InMaxDisplace, req, 0.20), 0.001, 2.0)
     local maxDisplacePx = maxDisplaceN * minDim
     local qualityMode = math.floor(clamp(inputNumber(InQualityMode, req, 1), 0, 1))
-    local debugOverlay = inputNumber(InDebugOverlay, req, 0) >= 0.5
+    local debugOverlay = (inputNumber(InDebugOverlay, req, 0) >= 0.5) and drawDebugVisuals
     local debugAlpha = clamp(inputNumber(InDebugAlpha, req, 0.35), 0.0, 1.0)
     local meshDiagnosticMode = math.floor(clamp(inputNumber(InMeshDiagnosticMode, req, 0), 0, 3))
     local meshDiagnosticThreshold = clamp(inputNumber(InMeshDiagnosticThreshold, req, 80.0), 1.0, 2048.0)
@@ -2448,11 +2600,13 @@ function Process(req)
 
     -- Fast exits when nothing needs deformation or debug rendering.
     if pinCount == 0 and not meshDebug and meshDiagnosticMode == 0 and meshDebugOutputMode == 0 then
+        logFpsMetrics(logFpsEnabled, req, w, h)
         OutImage:Set(req, img)
         return
     end
 
     if canDeform and activePinCount == 0 and not meshDebug and not debugOverlay and meshDiagnosticMode == 0 and meshDebugOutputMode == 0 then
+        logFpsMetrics(logFpsEnabled, req, w, h)
         OutImage:Set(req, img)
         return
     end
@@ -2890,5 +3044,6 @@ function Process(req)
     end
 
     -- Publish rendered output frame.
+    logFpsMetrics(logFpsEnabled, req, w, h)
     OutImage:Set(req, out)
 end
