@@ -38,9 +38,9 @@ Current build includes:
 - Multiple follower and wave deformers with per-slot enable toggles
 
 ## Installation
-1. Copy `RigFX_v1.1.fuse` into your Fusion Fuses folder.
+1. Copy `RigFX_v1.0.fuse` into your Fusion Fuses folder.
 2. Restart DaVinci Resolve/Fusion (or reload Fuses).
-3. Add **Puppet Pin** from the custom tools category.
+3. Add **RigFX** from the custom tools category.
 
 ## Usage (Quick Start)
 1. Connect your image/clip to Puppet Pin.
@@ -64,6 +64,7 @@ Current build includes:
 ## Tech Stack
 - DaVinci Resolve Fusion Fuse API
 - Lua
+- Python (separate implemenation soon)
 
 ## Author
 Mario

@@ -1,6 +1,6 @@
 -- Register the Fuse
-FuRegisterClass("RigFX_v1_1", CT_Tool, {
-    REGS_Name = "1mar.io1 RigFX_v1.1",
+FuRegisterClass("RigFX_v0_4", CT_Tool, {
+    REGS_Name = "1mar.io1 RigFX_v0.4",
     REGS_Category = "Custom",
     REGS_OpIconString = "RFX1",
 })

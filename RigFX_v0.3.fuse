@@ -1,15 +1,12 @@
 -- Register the Fuse
-FuRegisterClass("RigFX_v1_0", CT_Tool, {
-    REGS_Name = "1mar.io1 RigFX_v1.0",
+FuRegisterClass("RigFX_v0_3", CT_Tool, {
+    REGS_Name = "1mar.io1 RigFX_v0.3",
     REGS_Category = "Custom",
-    REGS_OpIconString = "RFX",
-    REG_TimeVariant = true,
+    REGS_OpIconString = "PP1",
 })
 
 -- Hard cap used for UI generation and runtime loops.
 local MAX_PINS = 32
-local MAX_FOLLOWERS = 8
-local MAX_WAVES = 8
 PinEnabled = {}
 PinPos = {}
 PinStrength = {}
@@ -23,12 +20,6 @@ InMaxDisplace = nil
 InQualityMode = nil
 InDebugOverlay = nil
 InDebugAlpha = nil
-InDebugRenderToOutput = nil
-InLogFpsMetrics = nil
-InMeshDiagnosticMode = nil
-InMeshDiagnosticThreshold = nil
-InMeshDebugOutputMode = nil
-InMeshFillCracks = nil
 InUseMeshMask = nil
 InMeshRebuild = nil
 InRebuildMeshButton = nil
@@ -53,32 +44,6 @@ InWeightMask = nil
 InUseWeightMask = nil
 InWeightMaskLock = nil
 InRigMode = nil
-InFollowerCount = nil
-InAddFollower = nil
-InRemoveFollower = nil
-FollowerEnable = {}
-FollowerSource = {}
-FollowerTarget = {}
-FollowerAmpX = {}
-FollowerAmpY = {}
-FollowerAmpRot = {}
-FollowerAmpExp = {}
-FollowerHeader = {}
-FollowerCountState = 1
-InWaveCount = nil
-InAddWave = nil
-InRemoveWave = nil
-WaveEnable = {}
-WaveBase = {}
-WaveStart = {}
-WaveEnd = {}
-WaveAmp = {}
-WaveFreq = {}
-WaveSpeed = {}
-WavePhase = {}
-WaveStretch = {}
-WaveHeader = {}
-WaveCountState = 1
 InLocatorEnable = nil
 InLocatorMode = nil
 
@@ -108,12 +73,6 @@ RuntimeCache = {
     interactHold = 0,
     wasInteracting = false,
     frame = 0,
-    fpsMetrics = {
-        enabled = false,
-        prevTime = nil,
-        frameCount = 0,
-        lastFrameTime = nil,
-    },
 }
 
 -- Create all inspector controls and IO ports for the Fuse.
@@ -352,64 +311,6 @@ function Create()
         IC_Visible = false,
     })
 
-    InDebugRenderToOutput = self:AddInput("Render Overlay/Mesh to Output", "DebugRenderToOutput", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "CheckboxControl",
-        INP_Integer = true,
-        INP_Default = 1,
-    })
-
-    InLogFpsMetrics = self:AddInput("Log FPS Metrics", "LogFpsMetrics", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "CheckboxControl",
-        INP_Integer = true,
-        INP_Default = 0,
-        INP_DoNotifyChanged = true,
-    })
-
-    InMeshDiagnosticMode = self:AddInput("Mesh Diagnostics", "MeshDiagnosticMode", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "ComboControl",
-        INP_Integer = true,
-        INP_Default = 0,
-        INP_MinAllowed = 0,
-        INP_MaxAllowed = 3,
-        { CCS_AddString = "Off", },
-        { CCS_AddString = "Contour Sources", },
-        { CCS_AddString = "Long Triangles", },
-        { CCS_AddString = "Warp Bounds", },
-    })
-
-    InMeshDiagnosticThreshold = self:AddInput("Diagnostic Threshold", "MeshDiagnosticThreshold", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "SliderControl",
-        INP_MinScale = 4.0,
-        INP_MaxScale = 256.0,
-        INP_MinAllowed = 1.0,
-        INP_MaxAllowed = 2048.0,
-        INP_Default = 80.0,
-    })
-
-    InMeshDebugOutputMode = self:AddInput("Debug Output Mode", "MeshDebugOutputMode", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "ComboControl",
-        INP_Integer = true,
-        INP_Default = 0,
-        INP_MinAllowed = 0,
-        INP_MaxAllowed = 3,
-        { CCS_AddString = "Normal", },
-        { CCS_AddString = "Warp Only", },
-        { CCS_AddString = "Full Mask Clear", },
-        { CCS_AddString = "No Hole Fill", },
-    })
-
-    InMeshFillCracks = self:AddInput("Fill Transparent Cracks", "MeshFillCracks", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "CheckboxControl",
-        INP_Integer = true,
-        INP_Default = 0,
-    })
-
     -- Deformers page: root lock + placeholders for upcoming deformer systems.
     self:AddControlPage("Deformers")
     self:BeginControlNest("Root Lock", "RootLockNest", true, {})
@@ -458,193 +359,14 @@ function Create()
     self:EndControlNest()
 
     self:BeginControlNest("Follower Deformer", "FollowerNest", false, {})
-    InAddFollower = self:AddInput("Add Follower", "AddFollower", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "ButtonControl",
-        INP_DoNotifyChanged = true,
-    })
-    InRemoveFollower = self:AddInput("Remove Follower", "RemoveFollower", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "ButtonControl",
-        INP_DoNotifyChanged = true,
-    })
-    for i = 1, MAX_FOLLOWERS do
-        FollowerHeader[i] = self:AddInput("Follower " .. i, "FollowerHeader" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "LabelControl",
-            IC_Visible = (i == 1),
-        })
-        FollowerEnable[i] = self:AddInput("Enable", "FollowerEnable" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "CheckboxControl",
-            INP_Integer = true,
-            INP_Default = (i == 1) and 1 or 0,
-            IC_Visible = (i == 1),
-        })
-        FollowerSource[i] = self:AddInput("Source Pin", "FollowerSource" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_Integer = true,
-            INP_MinScale = 1,
-            INP_MaxScale = MAX_PINS,
-            INP_MinAllowed = 1,
-            INP_MaxAllowed = MAX_PINS,
-            INP_Default = 1,
-            IC_Visible = (i == 1),
-        })
-        FollowerTarget[i] = self:AddInput("Target Pin", "FollowerTarget" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_Integer = true,
-            INP_MinScale = 1,
-            INP_MaxScale = MAX_PINS,
-            INP_MinAllowed = 1,
-            INP_MaxAllowed = MAX_PINS,
-            INP_Default = 2,
-            IC_Visible = (i == 1),
-        })
-        FollowerAmpX[i] = self:AddInput("Follow X", "FollowerAmpX" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_MinScale = -2.0,
-            INP_MaxScale = 2.0,
-            INP_Default = 1.0,
-            IC_Visible = (i == 1),
-        })
-        FollowerAmpY[i] = self:AddInput("Follow Y", "FollowerAmpY" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_MinScale = -2.0,
-            INP_MaxScale = 2.0,
-            INP_Default = 1.0,
-            IC_Visible = (i == 1),
-        })
-        FollowerAmpRot[i] = self:AddInput("Follow Rotation", "FollowerAmpRot" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_MinScale = -2.0,
-            INP_MaxScale = 2.0,
-            INP_Default = 0.0,
-            IC_Visible = (i == 1),
-        })
-        FollowerAmpExp[i] = self:AddInput("Follow Expansion", "FollowerAmpExp" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_MinScale = -2.0,
-            INP_MaxScale = 2.0,
-            INP_Default = 0.0,
-            IC_Visible = (i == 1),
-        })
-    end
-    self:AddInput("Delay/stacking in next pass", "FollowerPlaceholder", {
+    self:AddInput("Coming Soon: Follower", "FollowerPlaceholder", {
         LINKID_DataType = "Number",
         INPID_InputControl = "LabelControl",
     })
     self:EndControlNest()
 
     self:BeginControlNest("Wave Deformer", "WaveNest", false, {})
-    InAddWave = self:AddInput("Add Wave", "AddWave", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "ButtonControl",
-        INP_DoNotifyChanged = true,
-    })
-    InRemoveWave = self:AddInput("Remove Wave", "RemoveWave", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "ButtonControl",
-        INP_DoNotifyChanged = true,
-    })
-    for i = 1, MAX_WAVES do
-        WaveHeader[i] = self:AddInput("Wave " .. i, "WaveHeader" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "LabelControl",
-            IC_Visible = (i == 1),
-        })
-        WaveEnable[i] = self:AddInput("Enable", "WaveEnable" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "CheckboxControl",
-            INP_Integer = true,
-            INP_Default = 0,
-            IC_Visible = (i == 1),
-        })
-        WaveBase[i] = self:AddInput("Base Pin", "WaveBase" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_Integer = true,
-            INP_MinScale = 1,
-            INP_MaxScale = MAX_PINS,
-            INP_MinAllowed = 1,
-            INP_MaxAllowed = MAX_PINS,
-            INP_Default = 1,
-            IC_Visible = (i == 1),
-        })
-        WaveStart[i] = self:AddInput("Start Pin", "WaveStart" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_Integer = true,
-            INP_MinScale = 1,
-            INP_MaxScale = MAX_PINS,
-            INP_MinAllowed = 1,
-            INP_MaxAllowed = MAX_PINS,
-            INP_Default = 2,
-            IC_Visible = (i == 1),
-        })
-        WaveEnd[i] = self:AddInput("End Pin", "WaveEnd" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_Integer = true,
-            INP_MinScale = 1,
-            INP_MaxScale = MAX_PINS,
-            INP_MinAllowed = 1,
-            INP_MaxAllowed = MAX_PINS,
-            INP_Default = 6,
-            IC_Visible = (i == 1),
-        })
-        WaveAmp[i] = self:AddInput("Amplitude", "WaveAmp" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_MinScale = 0.0,
-            INP_MaxScale = 0.25,
-            INP_MinAllowed = 0.0,
-            INP_MaxAllowed = 1.0,
-            INP_Default = 0.03,
-            IC_Visible = (i == 1),
-        })
-        WaveFreq[i] = self:AddInput("Frequency", "WaveFreq" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_MinScale = 0.1,
-            INP_MaxScale = 6.0,
-            INP_MinAllowed = 0.01,
-            INP_MaxAllowed = 20.0,
-            INP_Default = 1.5,
-            IC_Visible = (i == 1),
-        })
-        WaveSpeed[i] = self:AddInput("Speed", "WaveSpeed" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_MinScale = -4.0,
-            INP_MaxScale = 4.0,
-            INP_Default = 1.0,
-            IC_Visible = (i == 1),
-        })
-        WavePhase[i] = self:AddInput("Phase", "WavePhase" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_MinScale = -6.283,
-            INP_MaxScale = 6.283,
-            INP_Default = 0.0,
-            IC_Visible = (i == 1),
-        })
-        WaveStretch[i] = self:AddInput("Stretch", "WaveStretch" .. i, {
-            LINKID_DataType = "Number",
-            INPID_InputControl = "SliderControl",
-            INP_MinScale = -0.5,
-            INP_MaxScale = 0.5,
-            INP_Default = 0.0,
-            IC_Visible = (i == 1),
-        })
-    end
-    self:AddInput("Use ordered pin IDs as chain", "WaveHint", {
+    self:AddInput("Coming Soon: Wave", "WavePlaceholder", {
         LINKID_DataType = "Number",
         INPID_InputControl = "LabelControl",
     })
@@ -815,107 +537,8 @@ local function setRootLockUiVisible(enabled)
     InRootLockStrength:SetAttrs({ IC_Visible = show })
 end
 
-local function setFollowerSlotUiVisible(i, enabled)
-    local show = enabled and true or false
-    FollowerHeader[i]:SetAttrs({ IC_Visible = show })
-    FollowerEnable[i]:SetAttrs({ IC_Visible = show })
-    FollowerSource[i]:SetAttrs({ IC_Visible = show })
-    FollowerTarget[i]:SetAttrs({ IC_Visible = show })
-    FollowerAmpX[i]:SetAttrs({ IC_Visible = show })
-    FollowerAmpY[i]:SetAttrs({ IC_Visible = show })
-    FollowerAmpRot[i]:SetAttrs({ IC_Visible = show })
-    FollowerAmpExp[i]:SetAttrs({ IC_Visible = show })
-end
-
-local function setWaveSlotUiVisible(i, enabled)
-    local show = enabled and true or false
-    WaveHeader[i]:SetAttrs({ IC_Visible = show })
-    WaveEnable[i]:SetAttrs({ IC_Visible = show })
-    WaveBase[i]:SetAttrs({ IC_Visible = show })
-    WaveStart[i]:SetAttrs({ IC_Visible = show })
-    WaveEnd[i]:SetAttrs({ IC_Visible = show })
-    WaveAmp[i]:SetAttrs({ IC_Visible = show })
-    WaveFreq[i]:SetAttrs({ IC_Visible = show })
-    WaveSpeed[i]:SetAttrs({ IC_Visible = show })
-    WavePhase[i]:SetAttrs({ IC_Visible = show })
-    WaveStretch[i]:SetAttrs({ IC_Visible = show })
-end
-
-local function applyFollowerCountVisibility(count)
-    local n = math.floor(count or 0)
-    if n < 0 then n = 0 end
-    if n > MAX_FOLLOWERS then n = MAX_FOLLOWERS end
-    for i = 1, MAX_FOLLOWERS do
-        setFollowerSlotUiVisible(i, i <= n)
-    end
-end
-
-local function applyWaveCountVisibility(count)
-    local n = math.floor(count or 0)
-    if n < 0 then n = 0 end
-    if n > MAX_WAVES then n = MAX_WAVES end
-    for i = 1, MAX_WAVES do
-        setWaveSlotUiVisible(i, i <= n)
-    end
-end
-
-local function readCountInput(inp, time, fallback)
-    local ok, v = pcall(function() return inp:GetValue(time) end)
-    if ok and v ~= nil then
-        if type(v) == "number" then return v end
-        local okVal, vv = pcall(function() return v.Value end)
-        if okVal and type(vv) == "number" then return vv end
-        local n = tonumber(v)
-        if n ~= nil then return n end
-    end
-    return fallback
-end
-
-local function writeCountInput(inp, time, value)
-    local v = math.floor(value + 0.5)
-    local wrote = false
-    local okSet = pcall(function() inp:Set(time, v) end)
-    if okSet then wrote = true end
-    local okSetValue = pcall(function() inp:SetValue(v, time) end)
-    if okSetValue then wrote = true end
-    local okIndex = pcall(function() inp[time] = v end)
-    if okIndex then wrote = true end
-    pcall(function() inp:SetAttrs({ INP_Default = v }) end)
-    return wrote
-end
-
 -- Handle inspector interactions that need immediate side effects.
 function NotifyChanged(inp, param, time)
-    local t = tonumber(time) or 0
-
-    if inp == InAddFollower or inp == InRemoveFollower then
-        -- Button controls can fire on press/release; only act on press.
-        if param == nil or (tonumber(param.Value) or 0) < 0.5 then
-            return
-        end
-        if inp == InAddFollower then
-            FollowerCountState = math.min(MAX_FOLLOWERS, math.floor((FollowerCountState or 1) + 1))
-        else
-            FollowerCountState = math.max(0, math.floor((FollowerCountState or 1) - 1))
-        end
-        applyFollowerCountVisibility(FollowerCountState)
-        return
-    end
-
-    if inp == InAddWave or inp == InRemoveWave then
-        -- Button controls can fire on press/release; only act on press.
-        if param == nil or (tonumber(param.Value) or 0) < 0.5 then
-            return
-        end
-        if inp == InAddWave then
-            WaveCountState = math.min(MAX_WAVES, math.floor((WaveCountState or 1) + 1))
-        else
-            WaveCountState = math.max(0, math.floor((WaveCountState or 1) - 1))
-        end
-        applyWaveCountVisibility(WaveCountState)
-        return
-    end
-
     if param == nil then return end
 
     if inp == InRebuildMeshButton then
@@ -953,14 +576,6 @@ function NotifyChanged(inp, param, time)
 
     if inp == InDebugOverlay then
         setDebugUiVisible(param.Value >= 0.5)
-        return
-    end
-
-    if inp == InLogFpsMetrics then
-        RuntimeCache.fpsMetrics.enabled = false
-        RuntimeCache.fpsMetrics.prevTime = nil
-        RuntimeCache.fpsMetrics.frameCount = 0
-        RuntimeCache.fpsMetrics.lastFrameTime = nil
         return
     end
 
@@ -1110,187 +725,135 @@ local function extractContourPoints(maskImg, region, alphaThreshold, contourSpac
     local y0 = clamp(math.floor(region.y0), 0, h - 1)
     local y1 = clamp(math.floor(region.y1), 0, h - 1)
 
-    local spacing = math.max(2.0, contourSpacing)
-    local approxPerim = math.max(1.0, 2.0 * ((x1 - x0) + (y1 - y0)))
-    local contourSampleSpacing = math.max(2.0, spacing * 0.5)
-    local maxContourPoints = clamp(math.floor(approxPerim / contourSampleSpacing + 0.5), 24, 420)
+    local boundarySet = {}
+    local boundaryPts = {}
 
-    local contourExpandPx = math.max(0.0, borderExpandPx or 0.0)
-    local dilateRadius = math.min(32, math.max(0, math.ceil(contourExpandPx)))
-    local bx0 = clamp(x0 - dilateRadius - 1, 0, w - 1)
-    local by0 = clamp(y0 - dilateRadius - 1, 0, h - 1)
-    local bx1 = clamp(x1 + dilateRadius + 1, 0, w - 1)
-    local by1 = clamp(y1 + dilateRadius + 1, 0, h - 1)
-    local cachePad = dilateRadius + 5
-    local cx0 = clamp(bx0 - cachePad, 0, w - 1)
-    local cy0 = clamp(by0 - cachePad, 0, h - 1)
-    local cx1 = clamp(bx1 + cachePad, 0, w - 1)
-    local cy1 = clamp(by1 + cachePad, 0, h - 1)
-    local cw = math.max(1, cx1 - cx0 + 1)
-    local ch = math.max(1, cy1 - cy0 + 1)
-
-    local baseMask = {}
-    local idx = 1
-    for yy = cy0, cy1 do
-        for xx = cx0, cx1 do
-            maskImg:GetPixel(xx, yy, mp)
-            baseMask[idx] = (maskValueAtPixel(mp) > thr) and 1 or 0
-            idx = idx + 1
-        end
-    end
-
-    local function cacheIndex(px, py)
-        return ((py - cy0) * cw) + (px - cx0) + 1
-    end
-    local function insidePixel(px, py)
-        if px < cx0 or px > cx1 or py < cy0 or py > cy1 then return false end
-        return baseMask[cacheIndex(px, py)] == 1
-    end
-
-    local contourMask = baseMask
-    if dilateRadius > 0 then
-        local hMask = {}
-        for yy = cy0, cy1 do
-            local rowBase = (yy - cy0) * cw
-            local prefix = { 0 }
-            local running = 0
-            for xx = cx0, cx1 do
-                running = running + (baseMask[rowBase + (xx - cx0) + 1] or 0)
-                prefix[(xx - cx0) + 2] = running
-            end
-            for xx = cx0, cx1 do
-                local lo = math.max(cx0, xx - dilateRadius)
-                local hi = math.min(cx1, xx + dilateRadius)
-                local count = prefix[(hi - cx0) + 2] - prefix[(lo - cx0) + 1]
-                hMask[rowBase + (xx - cx0) + 1] = (count > 0) and 1 or 0
-            end
-        end
-
-        contourMask = {}
-        for xx = cx0, cx1 do
-            local prefix = { 0 }
-            local running = 0
-            for yy = cy0, cy1 do
-                running = running + (hMask[((yy - cy0) * cw) + (xx - cx0) + 1] or 0)
-                prefix[(yy - cy0) + 2] = running
-            end
-            for yy = cy0, cy1 do
-                local lo = math.max(cy0, yy - dilateRadius)
-                local hi = math.min(cy1, yy + dilateRadius)
-                local count = prefix[(hi - cy0) + 2] - prefix[(lo - cy0) + 1]
-                contourMask[((yy - cy0) * cw) + (xx - cx0) + 1] = (count > 0) and 1 or 0
-            end
-        end
-    end
-
-    local function contourInsidePixel(px, py)
-        if px < cx0 or px > cx1 or py < cy0 or py > cy1 then return false end
-        return contourMask[cacheIndex(px, py)] == 1
-    end
-
-    local points = {}
-    local adjacency = {}
-    local function pointKey(px, py)
-        return tostring(px) .. ":" .. tostring(py)
-    end
-    local function ensurePoint(px, py)
-        local key = pointKey(px, py)
-        if not points[key] then
-            points[key] = { x = px, y = py }
-            adjacency[key] = {}
-        end
-        return key
-    end
-    local function addEdge(ax, ay, bx, by)
-        local a = ensurePoint(ax, ay)
-        local b = ensurePoint(bx, by)
-        adjacency[a][b] = true
-        adjacency[b][a] = true
-    end
-
-    -- Build true boundary edges from the expanded alpha footprint.
-    for y = by0, by1 do
-        for x = bx0, bx1 do
-            if contourInsidePixel(x, y) then
-                if not contourInsidePixel(x, y - 1) then addEdge(x, y, x + 1, y) end
-                if not contourInsidePixel(x + 1, y) then addEdge(x + 1, y, x + 1, y + 1) end
-                if not contourInsidePixel(x, y + 1) then addEdge(x + 1, y + 1, x, y + 1) end
-                if not contourInsidePixel(x - 1, y) then addEdge(x, y + 1, x, y) end
-            end
-        end
-    end
-
-    local function edgeKey(a, b)
-        if a < b then return a .. "|" .. b end
-        return b .. "|" .. a
-    end
-
-    local visitedEdges = {}
-    local bestLoop = nil
-    local bestLen = 0.0
-    for startKey, neighbors in pairs(adjacency) do
-        for nextKey in pairs(neighbors) do
-            local firstEdge = edgeKey(startKey, nextKey)
-            if not visitedEdges[firstEdge] then
-                local loop = { { x = points[startKey].x, y = points[startKey].y } }
-                local loopLen = 0.0
-                local prevKey = nil
-                local curKey = startKey
-                local curNextKey = nextKey
-                local guard = 0
-
-                while curNextKey and guard < 20000 do
-                    guard = guard + 1
-                    visitedEdges[edgeKey(curKey, curNextKey)] = true
-
-                    local cur = points[curKey]
-                    local nxt = points[curNextKey]
-                    local dx = nxt.x - cur.x
-                    local dy = nxt.y - cur.y
-                    loopLen = loopLen + math.sqrt((dx * dx) + (dy * dy))
-                    loop[#loop + 1] = { x = nxt.x, y = nxt.y }
-
-                    if curNextKey == startKey then break end
-
-                    local candidate = nil
-                    for k in pairs(adjacency[curNextKey]) do
-                        if k ~= curKey and not visitedEdges[edgeKey(curNextKey, k)] then
-                            candidate = k
-                            break
-                        end
+    for y = y0, y1 do
+        for x = x0, x1 do
+            maskImg:GetPixel(x, y, mp)
+            if maskValueAtPixel(mp) > thr then
+                local edge = false
+                local nx = { x - 1, x + 1, x, x }
+                local ny = { y, y, y - 1, y + 1 }
+                for i = 1, 4 do
+                    local sx = clamp(nx[i], 0, w - 1)
+                    local sy = clamp(ny[i], 0, h - 1)
+                    maskImg:GetPixel(sx, sy, mp)
+                    if maskValueAtPixel(mp) <= thr then
+                        edge = true
+                        break
                     end
-                    if not candidate then
-                        for k in pairs(adjacency[curNextKey]) do
-                            if k ~= prevKey and not visitedEdges[edgeKey(curNextKey, k)] then
-                                candidate = k
-                                break
+                end
+                if edge then
+                    local key = tostring(x) .. ":" .. tostring(y)
+                    boundarySet[key] = true
+                    boundaryPts[#boundaryPts + 1] = { ix = x, iy = y, x = x + 0.5, y = y + 0.5 }
+                end
+            end
+        end
+    end
+
+    if #boundaryPts < 8 then return nil end
+
+    local visited = {}
+    local bestComp = nil
+    local bestCompSize = 0
+
+    -- Find connected boundary components and keep the largest one (main silhouette).
+    for i = 1, #boundaryPts do
+        local seed = boundaryPts[i]
+        local seedKey = tostring(seed.ix) .. ":" .. tostring(seed.iy)
+        if not visited[seedKey] then
+            local q = { seed }
+            local qHead = 1
+            visited[seedKey] = true
+            local comp = {}
+
+            -- Flood fill over 8-neighborhood boundary pixels.
+            while qHead <= #q do
+                local p = q[qHead]
+                qHead = qHead + 1
+                comp[#comp + 1] = p
+
+                for oy = -1, 1 do
+                    for ox = -1, 1 do
+                        if not (ox == 0 and oy == 0) then
+                            local nx = p.ix + ox
+                            local ny = p.iy + oy
+                            if nx >= x0 and nx <= x1 and ny >= y0 and ny <= y1 then
+                                local nk = tostring(nx) .. ":" .. tostring(ny)
+                                if boundarySet[nk] and not visited[nk] then
+                                    visited[nk] = true
+                                    q[#q + 1] = { ix = nx, iy = ny, x = nx + 0.5, y = ny + 0.5 }
+                                end
                             end
                         end
                     end
-
-                    prevKey = curKey
-                    curKey = curNextKey
-                    curNextKey = candidate
                 end
+            end
 
-                if #loop >= 8 and loopLen > bestLen then
-                    bestLoop = loop
-                    bestLen = loopLen
-                end
+            if #comp > bestCompSize then
+                bestComp = comp
+                bestCompSize = #comp
             end
         end
     end
 
-    if not bestLoop then return nil end
-    if #bestLoop >= 2 then
-        local first = bestLoop[1]
-        local last = bestLoop[#bestLoop]
-        if math.abs(first.x - last.x) < 1e-6 and math.abs(first.y - last.y) < 1e-6 then
-            bestLoop[#bestLoop] = nil
+    local pts = bestComp or boundaryPts
+    if #pts < 8 then return nil end
+
+    local cx, cy = 0.0, 0.0
+    -- Quantize contour candidates by angle around centroid and keep the farthest
+    -- point per angle-bin to build a clean outer envelope.
+    for i = 1, #pts do
+        cx = cx + pts[i].x
+        cy = cy + pts[i].y
+    end
+    cx = cx / #pts
+    cy = cy / #pts
+
+    local spacing = math.max(2.0, contourSpacing)
+    local approxPerim = math.max(1.0, 2.0 * ((x1 - x0) + (y1 - y0)))
+    local maxContourPoints = clamp(math.floor(approxPerim / spacing + 0.5), 16, 320)
+    local binCount = clamp(maxContourPoints * 5, 96, 2400)
+
+    local bins = {}
+    local twoPi = 2.0 * math.pi
+    for i = 1, #pts do
+        local dx = pts[i].x - cx
+        local dy = pts[i].y - cy
+        local ang
+        if math.abs(dx) < 1e-9 then
+            ang = (dy >= 0.0) and (0.5 * math.pi) or (1.5 * math.pi)
+        else
+            ang = math.atan(dy / dx)
+            if dx < 0.0 then
+                ang = ang + math.pi
+            elseif dy < 0.0 then
+                ang = ang + twoPi
+            end
+        end
+        if ang < 0.0 then ang = ang + twoPi end
+        if ang >= twoPi then ang = ang - twoPi end
+
+        local bi = math.floor((ang / twoPi) * binCount) + 1
+        if bi < 1 then bi = 1 end
+        if bi > binCount then bi = binCount end
+
+        local r2 = (dx * dx) + (dy * dy)
+        local cur = bins[bi]
+        if cur == nil or r2 > cur.r2 then
+            bins[bi] = { x = pts[i].x, y = pts[i].y, r2 = r2 }
         end
     end
 
-    local out = bestLoop
+    local out = {}
+    for i = 1, binCount do
+        local b = bins[i]
+        if b ~= nil then
+            out[#out + 1] = { x = b.x, y = b.y }
+        end
+    end
     if #out < 8 then return nil end
 
     local function polyLength(poly)
@@ -1355,11 +918,11 @@ local function extractContourPoints(maskImg, region, alphaThreshold, contourSpac
     end
 
     local initialLen = polyLength(out)
-    local desiredCount = clamp(math.floor(initialLen / contourSampleSpacing + 0.5), 16, maxContourPoints)
+    local desiredCount = clamp(math.floor(initialLen / spacing + 0.5), 12, maxContourPoints)
     out = resampleClosed(out, desiredCount)
 
     if #out > 8 then
-        local smoothPasses = 0
+        local smoothPasses = 2
         for _ = 1, smoothPasses do
             local sm = {}
             for i = 1, #out do
@@ -1376,39 +939,25 @@ local function extractContourPoints(maskImg, region, alphaThreshold, contourSpac
         out = resampleClosed(out, desiredCount)
     end
 
-    local function nearestInsideSource(px, py)
-        local bx = math.floor(px)
-        local by = math.floor(py)
-        local bestX, bestY = nil, nil
-        local bestD2 = 1e18
-        for r = 0, 4 do
-            for oy = -r, r do
-                for ox = -r, r do
-                    if math.abs(ox) == r or math.abs(oy) == r then
-                        local ix = bx + ox
-                        local iy = by + oy
-                        if insidePixel(ix, iy) then
-                            local sx = ix + 0.5
-                            local sy = iy + 0.5
-                            local dx = sx - px
-                            local dy = sy - py
-                            local d2 = (dx * dx) + (dy * dy)
-                            if d2 < bestD2 then
-                                bestD2 = d2
-                                bestX = sx
-                                bestY = sy
-                            end
-                        end
-                    end
-                end
-            end
-            if bestX then break end
+    if borderExpandPx and borderExpandPx > 0 and #out > 2 then
+        local cx2, cy2 = 0.0, 0.0
+        for i = 1, #out do
+            cx2 = cx2 + out[i].x
+            cy2 = cy2 + out[i].y
         end
-        return bestX or clamp(px, 0, w - 1), bestY or clamp(py, 0, h - 1)
-    end
-
-    for i = 1, #out do
-        out[i].sx, out[i].sy = nearestInsideSource(out[i].x, out[i].y)
+        cx2 = cx2 / #out
+        cy2 = cy2 / #out
+        for i = 1, #out do
+            local dx = out[i].x - cx2
+            local dy = out[i].y - cy2
+            local d = math.sqrt(dx * dx + dy * dy)
+            if d > 1e-6 then
+                local nx = dx / d
+                local ny = dy / d
+                out[i].x = out[i].x + (nx * borderExpandPx)
+                out[i].y = out[i].y + (ny * borderExpandPx)
+            end
+        end
     end
 
     return out
@@ -1432,29 +981,11 @@ local function buildGridMesh(region, interiorSpacing, contourSpacing, borderExpa
     local interior = {}
     local seen = {}
     -- Deduplicate interior samples on integer pixel grid.
-    local function addInterior(x, y, sx, sy, support)
+    local function addInterior(x, y)
         local k = tostring(math.floor(x + 0.5)) .. ":" .. tostring(math.floor(y + 0.5))
         if not seen[k] then
-            local p = { x = x, y = y, sx = sx, sy = sy, support = support }
-            seen[k] = p
-            interior[#interior + 1] = p
-            return p
-        end
-        if support then seen[k].support = true end
-        return seen[k]
-    end
-
-    -- Ensure thin protrusions and detailed edges have nearby interior anchors even
-    -- when the regular interior grid spacing skips over them.
-    if contourCount > 0 then
-        local supportStride = math.max(1, math.floor((contourCount / 240) + 0.5))
-        for i = 1, contourCount, supportStride do
-            local c = contour[i]
-            local sx = c.sx or c.x
-            local sy = c.sy or c.y
-            if isInsideMask(sx, sy) then
-                addInterior(sx, sy, sx, sy, true)
-            end
+            seen[k] = true
+            interior[#interior + 1] = { x = x, y = y }
         end
     end
 
@@ -1491,26 +1022,6 @@ local function buildGridMesh(region, interiorSpacing, contourSpacing, borderExpa
             cy = cy + contour[i].y
         end
         addInterior(cx / contourCount, cy / contourCount)
-    end
-
-    -- Add support rings when contour expansion is wider than the interior grid.
-    -- Without these, expanded contour verts can connect to distant interior verts,
-    -- creating long boundary triangles that stretch edge pixels during deformation.
-    if contourCount >= 3 and borderExpandPx and borderExpandPx > step then
-        local ringCount = math.ceil(borderExpandPx / step)
-        ringCount = math.max(1, ringCount)
-        local ringStride = math.max(1, math.floor((contourCount / 240) + 0.5))
-        for r = 1, ringCount do
-            local t = r / (ringCount + 1)
-            for i = 1, contourCount, ringStride do
-                local c = contour[i]
-                local sx = c.sx or c.x
-                local sy = c.sy or c.y
-                local x = sx + ((c.x - sx) * t)
-                local y = sy + ((c.y - sy) * t)
-                addInterior(x, y, sx, sy, true)
-            end
-        end
     end
 
     -- Bowyer-Watson Delaunay triangulation over sampled points.
@@ -1740,7 +1251,6 @@ local function buildGridMesh(region, interiorSpacing, contourSpacing, borderExpa
         local bContour = (t[2] <= contourCount)
         local cContour = (t[3] <= contourCount)
         local contourVerts = (aContour and 1 or 0) + (bContour and 1 or 0) + (cContour and 1 or 0)
-        local supportVerts = ((a.support and 1) or 0) + ((b.support and 1) or 0) + ((c.support and 1) or 0)
 
         local abx, aby = b.x - a.x, b.y - a.y
         local bcx, bcy = c.x - b.x, c.y - b.y
@@ -1783,9 +1293,7 @@ local function buildGridMesh(region, interiorSpacing, contourSpacing, borderExpa
             if isInsideMask(cax, cay) then insideVotes = insideVotes + 1 end
 
             -- Boundary triangles can be thin; allow if any probe is inside.
-            -- Expanded support-ring points live outside the alpha mask, so allow
-            -- local band triangles that contain support/contour vertices too.
-            if insideVotes >= 1 or (supportVerts > 0 and (supportVerts + contourVerts) >= 2) then
+            if insideVotes >= 1 then
                 tris[#tris + 1] = { t[1], t[2], t[3] }
             end
             end
@@ -1827,7 +1335,7 @@ local function buildGridMesh(region, interiorSpacing, contourSpacing, borderExpa
         end
     end
 
-    return verts, tris, contourCount
+    return verts, tris
 end
 
 -- Draw a square point marker with configurable thickness in output image.
@@ -1905,125 +1413,6 @@ local function inputNumber(inp, req, def)
     return def
 end
 
-local function toolAttr(tool, name)
-    local ok, attrs = pcall(function() return tool:GetAttrs() end)
-    if ok and attrs then
-        return attrs[name]
-    end
-    return nil
-end
-
-local function toolName(tool)
-    local name = toolAttr(tool, "TOOLS_Name") or toolAttr(tool, "TOOLST_Name")
-    if name ~= nil then
-        return tostring(name)
-    end
-
-    local okName, directName = pcall(function() return tool.Name end)
-    if okName and directName ~= nil then
-        return tostring(directName)
-    end
-
-    return nil
-end
-
-local function isCurrentToolSelected()
-    local selectedAttr = toolAttr(self, "TOOLB_Selected")
-    if selectedAttr == true or selectedAttr == 1 then
-        return true
-    end
-
-    local comp = nil
-    pcall(function() comp = self.Comp end)
-    if comp == nil then
-        pcall(function() comp = self:GetComp() end)
-    end
-
-    if comp ~= nil then
-        local okActive, activeTool = pcall(function() return comp.ActiveTool end)
-        if okActive and activeTool ~= nil then
-            if activeTool == self then
-                return true
-            end
-            local selfName = toolName(self)
-            local activeName = toolName(activeTool)
-            if selfName ~= nil and activeName ~= nil and selfName == activeName then
-                return true
-            end
-        end
-
-        local okSelected, selectedTools = pcall(function() return comp:GetToolList(true) end)
-        if okSelected and selectedTools ~= nil then
-            local selfName = toolName(self)
-            for _, tool in pairs(selectedTools) do
-                if tool == self then
-                    return true
-                end
-                local selectedName = toolName(tool)
-                if selfName ~= nil and selectedName ~= nil and selfName == selectedName then
-                    return true
-                end
-            end
-        end
-    end
-
-    return false
-end
-
-local function shouldDrawDebugVisuals(req)
-    if inputNumber(InDebugRenderToOutput, req, 1) >= 0.5 then
-        return true
-    end
-    return isCurrentToolSelected()
-end
-
-local function resetFpsMetrics(metrics)
-    metrics.enabled = false
-    metrics.prevTime = nil
-    metrics.frameCount = 0
-    metrics.lastFrameTime = nil
-end
-
-local function logFpsMetrics(enabled, req, w, h)
-    local metrics = RuntimeCache.fpsMetrics
-
-    if not enabled then
-        if metrics.enabled then
-            print("[PuppetPin] FPS metrics disabled")
-        end
-        resetFpsMetrics(metrics)
-        return
-    end
-
-    local okClock, now = pcall(function() return os.clock() end)
-    if (not okClock) or type(now) ~= "number" then
-        return
-    end
-
-    if not metrics.enabled then
-        metrics.enabled = true
-        metrics.prevTime = now
-        metrics.frameCount = 0
-        metrics.lastFrameTime = nil
-    end
-
-    local delta = now - (metrics.prevTime or now)
-    metrics.prevTime = now
-    metrics.frameCount = metrics.frameCount + 1
-
-    local frameTime = req and req.Time or "?"
-    local repeatedFrame = metrics.lastFrameTime ~= nil and tostring(metrics.lastFrameTime) == tostring(frameTime)
-    metrics.lastFrameTime = frameTime
-
-    if delta > 0 then
-        local fps = 1.0 / delta
-        local frameMs = delta * 1000.0
-        print(string.format("[PuppetPin] Sample %d | Frame %s%s | FPS: %.1f | Frame Time: %.2f ms | Size: %dx%d", metrics.frameCount, tostring(frameTime), repeatedFrame and " repeated" or "", fps, frameMs, w or 0, h or 0))
-    else
-        print(string.format("[PuppetPin] Sample %d | Frame %s%s | FPS: -- | Frame Time: -- ms | Size: %dx%d", metrics.frameCount, tostring(frameTime), repeatedFrame and " repeated" or "", w or 0, h or 0))
-    end
-end
-
 -- Safe point getter for PointControl-style inputs.
 local function inputPoint(inp, req, defX, defY)
     local ok, p = pcall(function() return inp:GetValue(req) end)
@@ -2045,39 +1434,6 @@ local function inputPoint(inp, req, defX, defY)
     y = tonumber(y) or defY
 
     return x, y
-end
-
-local function resolveWaveTime(req)
-    local reqTime = tonumber(req and req.Time)
-    local compTime = nil
-
-    local c = nil
-    pcall(function() c = self.Comp end)
-    if c == nil then
-        pcall(function() c = self:GetComp() end)
-    end
-    if c ~= nil then
-        local okCompTime, ct = pcall(function() return c.CurrentTime end)
-        if okCompTime then
-            compTime = tonumber(ct)
-        end
-    end
-
-    if reqTime ~= nil then
-        local isQuick = false
-        local okQuick, quickValue = pcall(function() return req:IsQuick() end)
-        if okQuick then
-            isQuick = quickValue and true or false
-        end
-
-        if isQuick and compTime ~= nil and math.abs(compTime - reqTime) > 1e-6 then
-            return compTime
-        end
-        return reqTime
-    end
-
-    if compTime ~= nil then return compTime end
-    return 0
 end
 
 -- Return pin falloff weight from normalized distance t (0 center -> 1 edge).
@@ -2233,13 +1589,9 @@ local function computePinDisplacementAt(x, y, pins, influenceMode, falloffMode, 
 end
 
 -- Warp one source triangle into deformed triangle using barycentric mapping.
-local function warpMeshTriangle(out, srcImg, a0, b0, c0, a1, b1, c1, w, h, qualityMode, alphaClip, sp, ap, dp)
+local function warpMeshTriangle(out, srcImg, a0, b0, c0, a1, b1, c1, w, h, qualityMode, sp, dp)
     local den = ((b1.y - c1.y) * (a1.x - c1.x)) + ((c1.x - b1.x) * (a1.y - c1.y))
     if math.abs(den) < 1e-8 then return end
-
-    local a0x, a0y = a0.sx or a0.x, a0.sy or a0.y
-    local b0x, b0y = b0.sx or b0.x, b0.sy or b0.y
-    local c0x, c0y = c0.sx or c0.x, c0.sy or c0.y
 
     -- Use a conservative bbox to avoid dropping boundary pixels on shared triangle edges.
     local minX = math.max(0, math.floor(math.min(a1.x, math.min(b1.x, c1.x)) - 0.5))
@@ -2263,35 +1615,23 @@ local function warpMeshTriangle(out, srcImg, a0, b0, c0, a1, b1, c1, w, h, quali
             local w3 = 1.0 - w1 - w2
 
             if w1 >= eps and w2 >= eps and w3 >= eps then
-                local sx = (w1 * a0x) + (w2 * b0x) + (w3 * c0x)
-                local sy = (w1 * a0y) + (w2 * b0y) + (w3 * c0y)
-                local ax = (w1 * a0.x) + (w2 * b0.x) + (w3 * c0.x)
-                local ay = (w1 * a0.y) + (w2 * b0.y) + (w3 * c0.y)
+                local sx = (w1 * a0.x) + (w2 * b0.x) + (w3 * c0.x)
+                local sy = (w1 * a0.y) + (w2 * b0.y) + (w3 * c0.y)
                 sx = clamp(sx, 0, w - 1)
                 sy = clamp(sy, 0, h - 1)
-                ax = clamp(ax, 0, w - 1)
-                ay = clamp(ay, 0, h - 1)
 
                 if qualityMode == 0 then
                     srcImg:GetPixel(math.floor(sx + 0.5), math.floor(sy + 0.5), sp)
-                    srcImg:GetPixel(math.floor(ax + 0.5), math.floor(ay + 0.5), ap)
                 else
                     srcImg:SamplePixelB(sx, sy, sp)
-                    srcImg:SamplePixelB(ax, ay, ap)
-                end
-
-                local outA = tonumber(ap.A) or 0.0
-                if outA <= alphaClip then
-                    goto continue_pixel
                 end
 
                 dp.R = sp.R
                 dp.G = sp.G
                 dp.B = sp.B
-                dp.A = outA
+                dp.A = sp.A
                 out:SetPixel(x, y, dp)
             end
-            ::continue_pixel::
         end
     end
 end
@@ -2315,12 +1655,10 @@ function Process(req)
         OutImage:Set(req, img)
         return
     end
-    local logFpsEnabled = inputNumber(InLogFpsMetrics, req, 0) >= 0.5
 
     -- Read all mesh controls for this request/frame.
     local minDim = math.min(w, h)
     local rigMode = math.floor(clamp(inputNumber(InRigMode, req, 0), 0, 1)) -- 0=Setup, 1=Animate
-    local waveTime = resolveWaveTime(req)
     local canDeform = (rigMode == 1)
     local useMeshMask = inputNumber(InUseMeshMask, req, 0) >= 0.5
     local meshRebuild = math.floor(clamp(inputNumber(InMeshRebuild, req, 1), 0, 1))
@@ -2336,8 +1674,7 @@ function Process(req)
     local meshExpand = clamp(inputNumber(InMeshExpand, req, 0.02), 0.0, 1.0)
     local borderExpandPx = meshExpand * (0.10 * minDim)
     local meshAlwaysDisplay = inputNumber(InMeshAlwaysDisplay, req, 0) >= 0.5
-    local drawDebugVisuals = shouldDrawDebugVisuals(req)
-    local meshDebug = (meshAlwaysDisplay or (MeshPreviewCountdown > 0)) and drawDebugVisuals
+    local meshDebug = meshAlwaysDisplay or (MeshPreviewCountdown > 0)
     local meshThickness = math.floor(clamp(inputNumber(InMeshThickness, req, 2), 1, 5))
     local meshColorR = clamp(inputNumber(InMeshColor, req, 0.95), 0.0, 1.0)
     local meshColorG = clamp(inputNumber(InMeshColorG, req, 0.2), 0.0, 1.0)
@@ -2366,19 +1703,17 @@ function Process(req)
     -- Rebuild mesh only when relevant settings actually changed.
     if MeshCache.key ~= meshKey then
         local region = buildMaskRegion(meshSrc, w, h, meshExpand, maskAlphaThreshold, maskDownsample)
-        local verts, tris, contourCount = buildGridMesh(region, interiorSpacing, contourSpacing, borderExpandPx, meshSrc, maskAlphaThreshold, interiorJitter)
+        local verts, tris = buildGridMesh(region, interiorSpacing, contourSpacing, borderExpandPx, meshSrc, maskAlphaThreshold, interiorJitter)
         local maskCache = buildMaskCache(meshSrc, region, maskAlphaThreshold)
         MeshCache.key = meshKey
         MeshCache.region = region
         MeshCache.verts = verts
         MeshCache.tris = tris
-        MeshCache.contourCount = contourCount or 0
         MeshCache.mask = maskCache
     end
     local meshRegion = MeshCache.region
     local meshVerts = MeshCache.verts
     local meshTris = MeshCache.tris
-    local meshContourCount = MeshCache.contourCount or 0
     local meshMaskCache = MeshCache.mask
 
     -- Read deformation/solver/debug controls.
@@ -2387,12 +1722,8 @@ function Process(req)
     local maxDisplaceN = clamp(inputNumber(InMaxDisplace, req, 0.20), 0.001, 2.0)
     local maxDisplacePx = maxDisplaceN * minDim
     local qualityMode = math.floor(clamp(inputNumber(InQualityMode, req, 1), 0, 1))
-    local debugOverlay = (inputNumber(InDebugOverlay, req, 0) >= 0.5) and drawDebugVisuals
+    local debugOverlay = inputNumber(InDebugOverlay, req, 0) >= 0.5
     local debugAlpha = clamp(inputNumber(InDebugAlpha, req, 0.35), 0.0, 1.0)
-    local meshDiagnosticMode = math.floor(clamp(inputNumber(InMeshDiagnosticMode, req, 0), 0, 3))
-    local meshDiagnosticThreshold = clamp(inputNumber(InMeshDiagnosticThreshold, req, 80.0), 1.0, 2048.0)
-    local meshDebugOutputMode = math.floor(clamp(inputNumber(InMeshDebugOutputMode, req, 0), 0, 3))
-    local meshFillCracks = inputNumber(InMeshFillCracks, req, 0) >= 0.5
     local rootLockEnabled = inputNumber(InRootLockEnable, req, 0) >= 0.5
     local rootLockStrength = clamp(inputNumber(InRootLockStrength, req, 1.0), 0.0, 1.0)
     local useWeightMask = inputNumber(InUseWeightMask, req, 0) >= 0.5
@@ -2488,132 +1819,25 @@ function Process(req)
                 p.maxy = py + r
                 p.moveX = p.px - p.bindX
                 p.moveY = p.py - p.bindY
+                local activeMag = math.abs(p.moveX * p.pull) + math.abs(p.moveY * p.pull) + math.abs(p.rotationRad * p.radius) + math.abs(p.expansion * p.radius)
+                if activeMag > 1e-4 then
+                    activePinCount = activePinCount + 1
+                    activePins[activePinCount] = p
+                    -- Keep deformation bounds conservative to avoid seam flicker at radius edges.
+                    local pad = math.max(4.0, maxDisplacePx + 2.0)
+                    local px0 = math.floor(math.min(p.bindX, p.px) - p.radius - pad)
+                    local py0 = math.floor(math.min(p.bindY, p.py) - p.radius - pad)
+                    local px1 = math.floor(math.max(p.bindX, p.px) + p.radius + pad)
+                    local py1 = math.floor(math.max(p.bindY, p.py) + p.radius + pad)
+                    if px0 < ax0 then ax0 = px0 end
+                    if py0 < ay0 then ay0 = py0 end
+                    if px1 > ax1 then ax1 = px1 end
+                    if py1 > ay1 then ay1 = py1 end
+                end
             end
         else
             prevPinX[i] = nil
             prevPinY[i] = nil
-        end
-    end
-
-    -- Apply follower offsets after all pins are collected so source/target lookup is stable.
-    if canDeform and pinCount > 1 then
-        for fi = 1, MAX_FOLLOWERS do
-            if inputNumber(FollowerEnable[fi], req, (fi == 1) and 1 or 0) >= 0.5 then
-                local followerSource = math.floor(clamp(inputNumber(FollowerSource[fi], req, 1), 1, MAX_PINS))
-                local followerTarget = math.floor(clamp(inputNumber(FollowerTarget[fi], req, 2), 1, MAX_PINS))
-                if followerSource ~= followerTarget then
-                    local followerAmpX = inputNumber(FollowerAmpX[fi], req, 1.0)
-                    local followerAmpY = inputNumber(FollowerAmpY[fi], req, 1.0)
-                    local followerAmpRot = inputNumber(FollowerAmpRot[fi], req, 0.0)
-                    local followerAmpExp = inputNumber(FollowerAmpExp[fi], req, 0.0)
-
-                    local srcPin = nil
-                    local tgtPin = nil
-                    for i = 1, pinCount do
-                        local p = pins[i]
-                        if p.idx == followerSource then srcPin = p end
-                        if p.idx == followerTarget then tgtPin = p end
-                    end
-                    if srcPin and tgtPin then
-                        local sdx = srcPin.px - srcPin.bindX
-                        local sdy = srcPin.py - srcPin.bindY
-                        tgtPin.px = clamp(tgtPin.px + (sdx * followerAmpX), 0, w - 1)
-                        tgtPin.py = clamp(tgtPin.py + (sdy * followerAmpY), 0, h - 1)
-                        tgtPin.rotationRad = tgtPin.rotationRad + (srcPin.rotationRad * followerAmpRot)
-                        tgtPin.expansion = tgtPin.expansion + (srcPin.expansion * followerAmpExp)
-                    end
-                end
-            end
-        end
-    end
-
-    -- Wave v1: sinusoidal offset over pin-ID chain segment for cloth/hair motion.
-    if canDeform and pinCount > 1 then
-        for wi = 1, MAX_WAVES do
-            if inputNumber(WaveEnable[wi], req, 0) >= 0.5 then
-                local waveBase = math.floor(clamp(inputNumber(WaveBase[wi], req, 1), 1, MAX_PINS))
-                local waveStart = math.floor(clamp(inputNumber(WaveStart[wi], req, 2), 1, MAX_PINS))
-                local waveEnd = math.floor(clamp(inputNumber(WaveEnd[wi], req, 6), 1, MAX_PINS))
-                local waveAmpPx = clamp(inputNumber(WaveAmp[wi], req, 0.03), 0.0, 1.0) * minDim
-                local waveFreq = clamp(inputNumber(WaveFreq[wi], req, 1.5), 0.01, 20.0)
-                local waveSpeed = inputNumber(WaveSpeed[wi], req, 1.0)
-                local wavePhase = inputNumber(WavePhase[wi], req, 0.0)
-                local waveStretch = clamp(inputNumber(WaveStretch[wi], req, 0.0), -1.0, 1.0)
-
-                if waveAmpPx > 1e-6 then
-                    local chainLo = math.min(waveStart, waveEnd)
-                    local chainHi = math.max(waveStart, waveEnd)
-                    local chainSpan = math.max(1, chainHi - chainLo)
-                    local basePin = nil
-                    for i = 1, pinCount do
-                        if pins[i].idx == waveBase then
-                            basePin = pins[i]
-                            break
-                        end
-                    end
-
-                    if basePin then
-                        local timePhase = waveTime * waveSpeed
-                        local twoPi = 2.0 * math.pi
-                        for i = 1, pinCount do
-                            local p = pins[i]
-                            local id = p.idx
-                            if id >= chainLo and id <= chainHi and id ~= waveBase then
-                                local tx = (id - chainLo) / chainSpan
-                                local bvx = p.bindX - basePin.bindX
-                                local bvy = p.bindY - basePin.bindY
-                                local bl = math.sqrt((bvx * bvx) + (bvy * bvy))
-                                if bl > 1e-6 then
-                                    local ux = bvx / bl
-                                    local uy = bvy / bl
-                                    local nx = -uy
-                                    local ny = ux
-
-                                    local phase = wavePhase + timePhase + (tx * waveFreq * twoPi)
-                                    local s = math.sin(phase)
-                                    local c = math.cos(phase)
-
-                                    local amp = waveAmpPx * (0.6 + 0.4 * tx)
-                                    p.px = clamp(p.px + (nx * amp * s), 0, w - 1)
-                                    p.py = clamp(p.py + (ny * amp * s), 0, h - 1)
-
-                                    if math.abs(waveStretch) > 1e-6 then
-                                        local along = bl * waveStretch * c * 0.15 * (0.3 + 0.7 * tx)
-                                        p.px = clamp(p.px + (ux * along), 0, w - 1)
-                                        p.py = clamp(p.py + (uy * along), 0, h - 1)
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    -- Rebuild active deformation set after follower constraints are applied.
-    for i = 1, pinCount do
-        local p = pins[i]
-        p.moveX = p.px - p.bindX
-        p.moveY = p.py - p.bindY
-        p.minx = p.px - p.radius
-        p.maxx = p.px + p.radius
-        p.miny = p.py - p.radius
-        p.maxy = p.py + p.radius
-        local activeMag = math.abs(p.moveX * p.pull) + math.abs(p.moveY * p.pull) + math.abs(p.rotationRad * p.radius) + math.abs(p.expansion * p.radius)
-        if activeMag > 1e-4 then
-            activePinCount = activePinCount + 1
-            activePins[activePinCount] = p
-            -- Keep deformation bounds conservative to avoid seam flicker at radius edges.
-            local pad = math.max(4.0, maxDisplacePx + 2.0)
-            local px0 = math.floor(math.min(p.bindX, p.px) - p.radius - pad)
-            local py0 = math.floor(math.min(p.bindY, p.py) - p.radius - pad)
-            local px1 = math.floor(math.max(p.bindX, p.px) + p.radius + pad)
-            local py1 = math.floor(math.max(p.bindY, p.py) + p.radius + pad)
-            if px0 < ax0 then ax0 = px0 end
-            if py0 < ay0 then ay0 = py0 end
-            if px1 > ax1 then ax1 = px1 end
-            if py1 > ay1 then ay1 = py1 end
         end
     end
 
@@ -2622,14 +1846,12 @@ function Process(req)
     for i = activePinCount + 1, #activePins do activePins[i] = nil end
 
     -- Fast exits when nothing needs deformation or debug rendering.
-    if pinCount == 0 and not meshDebug and meshDiagnosticMode == 0 and meshDebugOutputMode == 0 then
-        logFpsMetrics(logFpsEnabled, req, w, h)
+    if pinCount == 0 and not meshDebug then
         OutImage:Set(req, img)
         return
     end
 
-    if canDeform and activePinCount == 0 and not meshDebug and not debugOverlay and meshDiagnosticMode == 0 and meshDebugOutputMode == 0 then
-        logFpsMetrics(logFpsEnabled, req, w, h)
+    if canDeform and activePinCount == 0 and not meshDebug and not debugOverlay then
         OutImage:Set(req, img)
         return
     end
@@ -2669,19 +1891,6 @@ function Process(req)
     -- Output starts as copy of source; deformation writes into this image.
     local out = img:CopyOf()
     local deformedVerts = meshVerts
-    local clearPixel = Pixel(out)
-    clearPixel.R = 0.0
-    clearPixel.G = 0.0
-    clearPixel.B = 0.0
-    clearPixel.A = 0.0
-
-    if meshDebugOutputMode == 1 then
-        for y = 0, h - 1 do
-            for x = 0, w - 1 do
-                out:SetPixel(x, y, clearPixel)
-            end
-        end
-    end
 
     -- Deformation pass: move mesh vertices, clear old subject area, re-rasterize triangles.
     if meshVerts and meshTris and #meshVerts >= 3 and #meshTris >= 1 and activePinCount > 0 and canDeform then
@@ -2735,12 +1944,6 @@ function Process(req)
         local my0 = clamp(math.max(math.floor(meshRegion.y0), ay0), 0, h - 1)
         local mx1 = clamp(math.min(math.floor(meshRegion.x1), ax1), 0, w - 1)
         local my1 = clamp(math.min(math.floor(meshRegion.y1), ay1), 0, h - 1)
-        if meshDebugOutputMode == 2 then
-            mx0 = clamp(math.floor(meshRegion.x0), 0, w - 1)
-            my0 = clamp(math.floor(meshRegion.y0), 0, h - 1)
-            mx1 = clamp(math.floor(meshRegion.x1), 0, w - 1)
-            my1 = clamp(math.floor(meshRegion.y1), 0, h - 1)
-        end
         for y = my0, my1 do
             for x = mx0, mx1 do
                 local inMask = false
@@ -2764,7 +1967,6 @@ function Process(req)
 
         -- Triangle warp pass (source mesh -> deformed mesh).
         local sp = Pixel(img)
-        local ap = Pixel(img)
         local dp = Pixel(out)
         -- Triangle-by-triangle warp from bind mesh to deformed mesh.
         for ti = 1, #meshTris do
@@ -2782,7 +1984,7 @@ function Process(req)
             if tx1 < ax0 or tx0 > ax1 or ty1 < ay0 or ty0 > ay1 then
                 goto continue_tri
             end
-            warpMeshTriangle(out, img, a0, b0, c0, a1, b1, c1, w, h, liveQualityMode, maskAlphaThreshold, sp, ap, dp)
+            warpMeshTriangle(out, img, a0, b0, c0, a1, b1, c1, w, h, liveQualityMode, sp, dp)
             ::continue_tri::
         end
 
@@ -2797,9 +1999,7 @@ function Process(req)
         local pn = Pixel(out)
         local pf = Pixel(out)
         local holeFillPasses = 0
-        if (not meshFillCracks) or meshDebugOutputMode == 3 then
-            holeFillPasses = 0
-        elseif canDeform and liveInteracting then
+        if canDeform and liveInteracting then
             -- Keep at least one pass while moving to avoid temporal seam flicker.
             holeFillPasses = 1
         elseif qualityMode == 1 then
@@ -2945,128 +2145,11 @@ function Process(req)
         end
     end
 
-    -- Targeted diagnostics for isolating mesh/warp artifacts.
-    if meshDiagnosticMode > 0 and meshVerts and meshTris and deformedVerts then
-        local diag = Pixel(out)
-        local function setColor(r, g, b, a)
-            diag.R = r
-            diag.G = g
-            diag.B = b
-            diag.A = a or 1.0
-        end
-        local function sourceXY(v)
-            return v.sx or v.x, v.sy or v.y
-        end
-        local function edgeLen2(p, q)
-            local dx = p.x - q.x
-            local dy = p.y - q.y
-            return (dx * dx) + (dy * dy)
-        end
-        local function triMaxLen2(a, b, c)
-            return math.max(edgeLen2(a, b), math.max(edgeLen2(b, c), edgeLen2(c, a)))
-        end
-        local function drawTri(a, b, c, thickness)
-            drawMeshLine(out, a.x, a.y, b.x, b.y, w, h, thickness, diag)
-            drawMeshLine(out, b.x, b.y, c.x, c.y, w, h, thickness, diag)
-            drawMeshLine(out, c.x, c.y, a.x, a.y, w, h, thickness, diag)
-        end
-        local function drawTriSource(a, b, c, thickness)
-            local ax, ay = sourceXY(a)
-            local bx, by = sourceXY(b)
-            local cx, cy = sourceXY(c)
-            drawMeshLine(out, ax, ay, bx, by, w, h, thickness, diag)
-            drawMeshLine(out, bx, by, cx, cy, w, h, thickness, diag)
-            drawMeshLine(out, cx, cy, ax, ay, w, h, thickness, diag)
-        end
-        local function drawRect(x0, y0, x1, y1, thickness)
-            drawMeshLine(out, x0, y0, x1, y0, w, h, thickness, diag)
-            drawMeshLine(out, x1, y0, x1, y1, w, h, thickness, diag)
-            drawMeshLine(out, x1, y1, x0, y1, w, h, thickness, diag)
-            drawMeshLine(out, x0, y1, x0, y0, w, h, thickness, diag)
-        end
-
-        if meshDiagnosticMode == 1 then
-            local limit = math.min(meshContourCount, #meshVerts)
-            setColor(0.0, 1.0, 1.0, 1.0)
-            for i = 1, limit do
-                local j = (i % limit) + 1
-                local ax, ay = sourceXY(meshVerts[i])
-                local bx, by = sourceXY(meshVerts[j])
-                drawMeshLine(out, ax, ay, bx, by, w, h, meshThickness + 1, diag)
-            end
-
-            setColor(1.0, 1.0, 0.0, 1.0)
-            for i = 1, limit do
-                local j = (i % limit) + 1
-                drawMeshLine(out, deformedVerts[i].x, deformedVerts[i].y, deformedVerts[j].x, deformedVerts[j].y, w, h, meshThickness + 1, diag)
-            end
-
-            setColor(1.0, 0.0, 1.0, 1.0)
-            local threshold2 = meshDiagnosticThreshold * meshDiagnosticThreshold
-            for i = 1, limit do
-                local sx, sy = sourceXY(meshVerts[i])
-                local dx = deformedVerts[i].x - sx
-                local dy = deformedVerts[i].y - sy
-                if ((dx * dx) + (dy * dy)) >= threshold2 then
-                    drawMeshLine(out, sx, sy, deformedVerts[i].x, deformedVerts[i].y, w, h, meshThickness + 1, diag)
-                    drawMeshPoint(out, math.floor(deformedVerts[i].x + 0.5), math.floor(deformedVerts[i].y + 0.5), w, h, meshThickness + 2, diag)
-                end
-            end
-        elseif meshDiagnosticMode == 2 then
-            local threshold2 = meshDiagnosticThreshold * meshDiagnosticThreshold
-            for ti = 1, #meshTris do
-                local t = meshTris[ti]
-                local a = deformedVerts[t[1]]
-                local b = deformedVerts[t[2]]
-                local c = deformedVerts[t[3]]
-                if a and b and c and triMaxLen2(a, b, c) >= threshold2 then
-                    setColor(1.0, 0.0, 1.0, 1.0)
-                    drawTri(a, b, c, meshThickness + 1)
-                    setColor(0.0, 1.0, 1.0, 1.0)
-                    drawTriSource(meshVerts[t[1]], meshVerts[t[2]], meshVerts[t[3]], meshThickness)
-                end
-            end
-        elseif meshDiagnosticMode == 3 then
-            local pad = meshDiagnosticThreshold
-            local rx0 = (meshRegion and meshRegion.x0 or 0) - pad
-            local ry0 = (meshRegion and meshRegion.y0 or 0) - pad
-            local rx1 = (meshRegion and meshRegion.x1 or (w - 1)) + pad
-            local ry1 = (meshRegion and meshRegion.y1 or (h - 1)) + pad
-            if meshRegion then
-                setColor(0.0, 1.0, 1.0, 1.0)
-                drawRect(meshRegion.x0, meshRegion.y0, meshRegion.x1, meshRegion.y1, meshThickness + 1)
-            end
-            if activePinCount > 0 then
-                setColor(1.0, 1.0, 0.0, 1.0)
-                drawRect(ax0, ay0, ax1, ay1, meshThickness + 1)
-            end
-            for ti = 1, #meshTris do
-                local t = meshTris[ti]
-                local a = deformedVerts[t[1]]
-                local b = deformedVerts[t[2]]
-                local c = deformedVerts[t[3]]
-                if a and b and c then
-                    local tx0 = math.min(a.x, math.min(b.x, c.x))
-                    local ty0 = math.min(a.y, math.min(b.y, c.y))
-                    local tx1 = math.max(a.x, math.max(b.x, c.x))
-                    local ty1 = math.max(a.y, math.max(b.y, c.y))
-                    if tx0 < rx0 or tx1 > rx1 or ty0 < ry0 or ty1 > ry1 then
-                        setColor(1.0, 0.0, 0.0, 1.0)
-                        drawTri(a, b, c, meshThickness + 1)
-                        setColor(0.0, 1.0, 1.0, 1.0)
-                        drawTriSource(meshVerts[t[1]], meshVerts[t[2]], meshVerts[t[3]], meshThickness)
-                    end
-                end
-            end
-        end
-    end
-
     -- Countdown for temporary mesh preview visibility.
     if MeshPreviewCountdown > 0 then
         MeshPreviewCountdown = MeshPreviewCountdown - 1
     end
 
     -- Publish rendered output frame.
-    logFpsMetrics(logFpsEnabled, req, w, h)
     OutImage:Set(req, out)
 end
