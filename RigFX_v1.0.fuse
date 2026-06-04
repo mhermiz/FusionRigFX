@@ -2143,11 +2143,13 @@ local function computePinDisplacementAt(x, y, pins, influenceMode, falloffMode, 
                     fy = fy + (uy * expForce)
                 end
 
-                -- Rotation moves vertices tangentially around the pin.
+                -- Rotation behaves like a joint: little motion at the pivot,
+                -- stronger tangential motion farther from the pin center.
                 if math.abs(pin.rotationRad) > 1e-6 and dist2 > 1e-12 then
                     local tx = -uy
                     local ty = ux
-                    local rotForce = pin.rotationRad * pin.radius * 0.35 * falloff
+                    local rotRamp = t * t * (3.0 - (2.0 * t))
+                    local rotForce = pin.rotationRad * pin.radius * 0.70 * falloff * rotRamp
                     fx = fx + (tx * rotForce)
                     fy = fy + (ty * rotForce)
                 end
