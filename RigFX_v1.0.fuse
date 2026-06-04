@@ -77,8 +77,6 @@ WavePhase = {}
 WaveStretch = {}
 WaveHeader = {}
 WaveCountState = 1
-InLocatorEnable = nil
-InLocatorMode = nil
 
 -- Cached mesh payload to avoid rebuilding expensive geometry every frame.
 MeshCache = {
@@ -134,8 +132,6 @@ function Create()
             Mesh = "Icons.Tools.Tabs.Matte",
             Pins = "Icons.Tools.Tabs.XYPath",
             Deformers = "Icons.Tools.Tabs.PolyLine",
-            Solver = "Icons.Tools.Tabs.Operation",
-            Locators = "Icons.Tools.Tabs.Tracker",
             Overlay = "Icons.Tools.Tabs.Display",
         }
 
@@ -262,49 +258,10 @@ function Create()
 
     -- Pre-register pages to stabilize tab ordering in the inspector.
     -- Final content for each page is added below.
-    -- Intended order: Mesh, Pins, Deformers, Solver, Locators, Overlay.
+    -- Intended order: Mesh, Pins, Deformers, Overlay.
     AddRigFXControlPage("Pins")
     AddRigFXControlPage("Deformers")
-    AddRigFXControlPage("Solver")
-    AddRigFXControlPage("Locators")
     AddRigFXControlPage("Overlay")
-
-    -- Solver page: global deformation behavior shared across all pins.
-    AddRigFXControlPage("Solver")
-
-    InFalloffMode = self:AddInput("Falloff Mode", "FalloffMode", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "ComboControl",
-        INP_Integer = true,
-        INP_Default = 1,
-        INP_MinAllowed = 0,
-        INP_MaxAllowed = 2,
-        { CCS_AddString = "Linear", },
-        { CCS_AddString = "Smoothstep", },
-        { CCS_AddString = "Gaussian", },
-    })
-
-    InInfluenceMode = self:AddInput("Influence Mode", "InfluenceMode", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "ComboControl",
-        INP_Integer = true,
-        INP_Default = 0,
-        INP_MinAllowed = 0,
-        INP_MaxAllowed = 2,
-        { CCS_AddString = "Sum", },
-        { CCS_AddString = "Max", },
-        { CCS_AddString = "Normalized Sum", },
-    })
-
-    InMaxDisplace = self:AddInput("Max Displacement", "MaxDisplacement", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "SliderControl",
-        INP_MinScale = 0.01,
-        INP_MaxScale = 0.50,
-        INP_MinAllowed = 0.001,
-        INP_MaxAllowed = 2.0,
-        INP_Default = 0.20,
-    })
 
     -- Overlay page: debug visualization controls.
     AddRigFXControlPage("Overlay")
@@ -651,6 +608,37 @@ function Create()
         { CCS_AddString = "Setup", },
         { CCS_AddString = "Animate", },
     })
+    InFalloffMode = self:AddInput("Falloff Mode", "FalloffMode", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ComboControl",
+        INP_Integer = true,
+        INP_Default = 1,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 2,
+        { CCS_AddString = "Linear", },
+        { CCS_AddString = "Smoothstep", },
+        { CCS_AddString = "Gaussian", },
+    })
+    InInfluenceMode = self:AddInput("Influence Mode", "InfluenceMode", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ComboControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_MinAllowed = 0,
+        INP_MaxAllowed = 2,
+        { CCS_AddString = "Sum", },
+        { CCS_AddString = "Max", },
+        { CCS_AddString = "Normalized Sum", },
+    })
+    InMaxDisplace = self:AddInput("Max Displacement", "MaxDisplacement", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "SliderControl",
+        INP_MinScale = 0.01,
+        INP_MaxScale = 0.50,
+        INP_MinAllowed = 0.001,
+        INP_MaxAllowed = 2.0,
+        INP_Default = 0.20,
+    })
     InUseWeightMask = self:AddInput("Use Weight Mask", "UseWeightMask", {
         LINKID_DataType = "Number",
         INPID_InputControl = "CheckboxControl",
@@ -741,29 +729,6 @@ function Create()
 
         self:EndControlNest()
     end
-
-    -- Locators page: placeholders for output tracking channels (next version).
-    AddRigFXControlPage("Locators")
-    self:BeginControlNest("Locators", "LocatorsNest", true, {})
-    InLocatorEnable = self:AddInput("Enable Locators", "LocatorEnable", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "CheckboxControl",
-        INP_Integer = true,
-        INP_Default = 0,
-    })
-    InLocatorMode = self:AddInput("Locator Source", "LocatorMode", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "ComboControl",
-        INP_Integer = true,
-        INP_Default = 0,
-        { CCS_AddString = "Pin", },
-        { CCS_AddString = "Vertex", },
-    })
-    self:AddInput("Outputs coming in next version", "LocatorPlaceholder", {
-        LINKID_DataType = "Number",
-        INPID_InputControl = "LabelControl",
-    })
-    self:EndControlNest()
 
     -- Main image output
     OutImage = self:AddOutput("Output", "Output", {
