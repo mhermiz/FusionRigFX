@@ -51,6 +51,7 @@ InWeightMask = nil
 InUseWeightMask = nil
 InWeightMaskLock = nil
 InRigMode = nil
+InBindFrame = nil
 InFollowerCount = nil
 InAddFollower = nil
 InRemoveFollower = nil
@@ -89,6 +90,7 @@ MeshCache = {
 
 RebuildMeshScript = [[
 MeshCache.key = nil
+DeformCache.verts = {}
 ]]
 
 -- Temporary countdown used to force mesh preview visibility after edits.
@@ -608,6 +610,14 @@ function Create()
         { CCS_AddString = "Setup", },
         { CCS_AddString = "Animate", },
     })
+    InBindFrame = self:AddInput("Bind Frame", "BindFrame", {
+        LINKID_DataType = "Number",
+        INPID_InputControl = "ScrewControl",
+        INP_Integer = true,
+        INP_Default = 0,
+        INP_MinScale = -10000,
+        INP_MaxScale = 10000,
+    })
     InFalloffMode = self:AddInput("Falloff Mode", "FalloffMode", {
         LINKID_DataType = "Number",
         INPID_InputControl = "ComboControl",
@@ -804,6 +814,12 @@ local function applyWaveCountVisibility(count)
     end
 end
 
+local function clearPinBindPoses()
+    for i = 1, MAX_PINS do
+        PinBindPose[i] = nil
+    end
+end
+
 local function readCountInput(inp, time, fallback)
     local ok, v = pcall(function() return inp:GetValue(time) end)
     if ok and v ~= nil then
@@ -885,6 +901,11 @@ function NotifyChanged(inp, param, time)
         return
     end
 
+    if inp == InBindFrame then
+        clearPinBindPoses()
+        return
+    end
+
     for i = 1, MAX_PINS do
         if inp == PinEnabled[i] then
             local on = param.Value >= 0.5
@@ -892,6 +913,10 @@ function NotifyChanged(inp, param, time)
             if not on then
                 PinBindPose[i] = nil
             end
+            return
+        end
+        if inp == PinPos[i] then
+            PinBindPose[i] = nil
             return
         end
     end
@@ -1991,10 +2016,35 @@ local function inputPoint(inp, req, defX, defY)
     return x, y
 end
 
+local function inputPointAtTime(inp, time, defX, defY)
+    local ok, p = pcall(function() return inp:GetValue(time) end)
+    if (not ok) or p == nil then return defX, defY end
+
+    local x, y
+
+    if type(p) == "table" then
+        x = p.X or p[1]
+        y = p.Y or p[2]
+    else
+        local okx, vx = pcall(function() return p.X end)
+        local oky, vy = pcall(function() return p.Y end)
+        if okx then x = vx end
+        if oky then y = vy end
+    end
+
+    x = tonumber(x) or defX
+    y = tonumber(y) or defY
+
+    return x, y
+end
+
 local function resolveWaveTime(req)
     local reqTime = tonumber(req and req.Time)
-    local compTime = nil
+    if reqTime ~= nil then
+        return reqTime
+    end
 
+    local compTime = nil
     local c = nil
     pcall(function() c = self.Comp end)
     if c == nil then
@@ -2006,20 +2056,6 @@ local function resolveWaveTime(req)
             compTime = tonumber(ct)
         end
     end
-
-    if reqTime ~= nil then
-        local isQuick = false
-        local okQuick, quickValue = pcall(function() return req:IsQuick() end)
-        if okQuick then
-            isQuick = quickValue and true or false
-        end
-
-        if isQuick and compTime ~= nil and math.abs(compTime - reqTime) > 1e-6 then
-            return compTime
-        end
-        return reqTime
-    end
-
     if compTime ~= nil then return compTime end
     return 0
 end
@@ -2266,6 +2302,7 @@ function Process(req)
     -- Read all mesh controls for this request/frame.
     local minDim = math.min(w, h)
     local rigMode = math.floor(clamp(inputNumber(InRigMode, req, 0), 0, 1)) -- 0=Setup, 1=Animate
+    local bindFrame = inputNumber(InBindFrame, req, 0)
     local waveTime = resolveWaveTime(req)
     local canDeform = (rigMode == 1)
     local useMeshMask = false
@@ -2313,6 +2350,7 @@ function Process(req)
         MeshCache.tris = tris
         MeshCache.contourCount = contourCount or 0
         MeshCache.mask = maskCache
+        DeformCache.verts = {}
     end
     local meshRegion = MeshCache.region
     local meshVerts = MeshCache.verts
@@ -2388,7 +2426,7 @@ function Process(req)
 
             local ppx = prevPinX[i]
             local ppy = prevPinY[i]
-            if ppx ~= nil and ppy ~= nil then
+            if selectedDebugPreview and ppx ~= nil and ppy ~= nil then
                 local md = math.abs(px - ppx) + math.abs(py - ppy)
                 if md > 0.30 then
                     interacting = true
@@ -2397,8 +2435,11 @@ function Process(req)
             prevPinX[i] = px
             prevPinY[i] = py
 
-            if PinBindPose[i] == nil or rigMode == 0 then
-                PinBindPose[i] = { x = px, y = py }
+            if rigMode == 0 then
+                PinBindPose[i] = { xNorm = xNorm, yNorm = yNorm }
+            elseif PinBindPose[i] == nil then
+                local bxNorm, byNorm = inputPointAtTime(PinPos[i], bindFrame, xNorm, yNorm)
+                PinBindPose[i] = { xNorm = bxNorm, yNorm = byNorm }
             end
 
             if radiusPx > 1.0 then
@@ -2412,8 +2453,9 @@ function Process(req)
                 p.idx = i
                 p.px = px
                 p.py = py
-                p.bindX = PinBindPose[i].x
-                p.bindY = PinBindPose[i].y
+                local bindPose = PinBindPose[i]
+                p.bindX = ((bindPose.xNorm ~= nil) and bindPose.xNorm * w) or bindPose.x
+                p.bindY = ((bindPose.yNorm ~= nil) and bindPose.yNorm * h) or bindPose.y
                 p.pull = pull
                 p.rotationRad = (rotationDeg * math.pi) / 180.0
                 p.expansion = expansion
@@ -2586,6 +2628,9 @@ function Process(req)
         RuntimeCache.interactHold = 6
     elseif RuntimeCache.interactHold > 0 then
         RuntimeCache.interactHold = RuntimeCache.interactHold - 1
+    end
+    if not selectedDebugPreview then
+        RuntimeCache.interactHold = 0
     end
     local liveInteracting = (RuntimeCache.interactHold > 0)
 
